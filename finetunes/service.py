@@ -29,6 +29,20 @@ _MAX_CONCURRENCY = {
 # HTTP statuses worth retrying with backoff (transient: system_busy / 5xx).
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
+# Serialise generate_all per prompt: concurrent requests (e.g. page reloads)
+# must not duplicate work or collectively exceed a provider's concurrency cap.
+_prompt_locks = {}
+_prompt_locks_guard = threading.Lock()
+
+
+def _prompt_lock(prompt_id):
+    with _prompt_locks_guard:
+        lock = _prompt_locks.get(prompt_id)
+        if lock is None:
+            lock = threading.Lock()
+            _prompt_locks[prompt_id] = lock
+        return lock
+
 
 def _generate_with_retry(provider_name, prompt_text, clip_seconds, attempts=4):
     """Call a provider, retrying transient failures (429/5xx/timeouts) with backoff."""
@@ -243,74 +257,78 @@ def generate_all(exp, prompt):
     if prompt.experiment_id != exp.id:
         raise ValueError("Prompt does not belong to this experiment")
 
-    existing = list(prompt.comparisons)
-    needed = exp.samples_per_prompt - len(existing)
-    for i in range(max(0, needed)):
-        comparison = Comparison(
-            experiment_id=exp.id,
-            prompt_id=prompt.id,
-            sample_index=len(existing) + i,
-        )
-        db.session.add(comparison)
-        db.session.flush()
-        # Randomise which provider lands in slot 1 vs slot 2, per pair.
-        order = list(PROVIDER_NAMES)
-        random.shuffle(order)
-        for slot, provider_name in enumerate(order, start=1):
-            db.session.add(
-                Generation(
-                    comparison_id=comparison.id,
-                    slot=slot,
-                    provider=provider_name,
-                    prompt_text=prompt.text,
-                    request_payload="{}",
-                    status="pending",
-                )
+    # Only one generation pass per prompt at a time. A second concurrent request
+    # (e.g. a page reload) blocks here, then finds nothing left to do.
+    with _prompt_lock(prompt.id):
+        existing = list(prompt.comparisons)
+        needed = exp.samples_per_prompt - len(existing)
+        for i in range(max(0, needed)):
+            comparison = Comparison(
+                experiment_id=exp.id,
+                prompt_id=prompt.id,
+                sample_index=len(existing) + i,
             )
-    db.session.commit()
+            db.session.add(comparison)
+            db.session.flush()
+            # Randomise which provider lands in slot 1 vs slot 2, per pair.
+            order = list(PROVIDER_NAMES)
+            random.shuffle(order)
+            for slot, provider_name in enumerate(order, start=1):
+                db.session.add(
+                    Generation(
+                        comparison_id=comparison.id,
+                        slot=slot,
+                        provider=provider_name,
+                        prompt_text=prompt.text,
+                        request_payload="{}",
+                        status="pending",
+                    )
+                )
+        db.session.commit()
 
-    todo = [g for c in prompt.comparisons for g in c.generations if g.status != "ok"]
-    if not todo:
-        return {"samples": exp.samples_per_prompt, "generated": 0, "failed": 0}
+        todo = [g for c in prompt.comparisons for g in c.generations if g.status != "ok"]
+        if not todo:
+            return {"samples": exp.samples_per_prompt, "generated": 0, "failed": 0}
 
-    storage_dir = _storage_dir(exp.id)
-    prompt_text = prompt.text
-    clip_seconds = exp.clip_seconds
-    tasks = [(g.id, g.provider) for g in todo]
+        storage_dir = _storage_dir(exp.id)
+        prompt_text = prompt.text
+        clip_seconds = exp.clip_seconds
+        tasks = [(g.id, g.provider) for g in todo]
 
-    # One semaphore per provider so we never exceed its concurrency cap
-    # (ElevenLabs 429s beyond its per-tier limit).
-    sems = {name: threading.Semaphore(_MAX_CONCURRENCY.get(name, 2)) for name in PROVIDER_NAMES}
+        # One semaphore per provider so we never exceed its concurrency cap
+        # (ElevenLabs 429s beyond its per-tier limit).
+        sems = {name: threading.Semaphore(_MAX_CONCURRENCY.get(name, 2)) for name in PROVIDER_NAMES}
 
-    def _work(gen_id, provider_name):
-        # Network only — no DB or app context touched off the main thread.
-        with sems[provider_name]:
-            return gen_id, _generate_with_retry(provider_name, prompt_text, clip_seconds)
+        def _work(gen_id, provider_name):
+            # Network only — no DB or app context touched off the main thread.
+            with sems[provider_name]:
+                return gen_id, _generate_with_retry(provider_name, prompt_text, clip_seconds)
 
-    generated = 0
-    failed = 0
-    with ThreadPoolExecutor(max_workers=min(8, len(tasks))) as ex:
-        futures = {ex.submit(_work, gid, pn): gid for gid, pn in tasks}
-        for fut in as_completed(futures):
-            gen = db.session.get(Generation, futures[fut])
-            try:
-                _, result = fut.result()
-            except Exception as exc:  # noqa: BLE001 - record and keep going
-                gen.status = "error"
-                gen.error = repr(exc)
-                failed += 1
-                continue
-            path = os.path.join(storage_dir, "gen_%d.%s" % (gen.id, result.audio_format))
-            with open(path, "wb") as f:
-                f.write(result.audio_bytes)
-            gen.audio_path = path
-            gen.audio_format = result.audio_format
-            gen.duration_ms = result.duration_ms
-            gen.request_payload = json.dumps(result.request_payload)
-            gen.status = "ok"
-            gen.error = None
-            generated += 1
-    db.session.commit()
+        generated = 0
+        failed = 0
+        with ThreadPoolExecutor(max_workers=min(8, len(tasks))) as ex:
+            futures = {ex.submit(_work, gid, pn): gid for gid, pn in tasks}
+            for fut in as_completed(futures):
+                gen = db.session.get(Generation, futures[fut])
+                try:
+                    _, result = fut.result()
+                except Exception as exc:  # noqa: BLE001 - record and keep going
+                    gen.status = "error"
+                    gen.error = repr(exc)
+                    failed += 1
+                    db.session.commit()
+                    continue
+                path = os.path.join(storage_dir, "gen_%d.%s" % (gen.id, result.audio_format))
+                with open(path, "wb") as f:
+                    f.write(result.audio_bytes)
+                gen.audio_path = path
+                gen.audio_format = result.audio_format
+                gen.duration_ms = result.duration_ms
+                gen.request_payload = json.dumps(result.request_payload)
+                gen.status = "ok"
+                gen.error = None
+                generated += 1
+                db.session.commit()  # persist each clip as it lands
 
     if failed:
         # Successful clips are saved; a retry regenerates only the failures.
