@@ -1,4 +1,9 @@
 """End-to-end flow test using the mock generator (no real API calls)."""
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+from finetunes import service
+from finetunes.models import Comparison, Generation, db
 
 
 USER = "james.richardson.2556@gmail.com"
@@ -14,7 +19,7 @@ def _create(client, num_prompts, samples, user_email=USER):
         },
     )
     assert r.status_code == 201
-    return r.get_json()["id"]
+    return r.json()["id"]
 
 
 def test_ids_start_at_one_and_increment(client):
@@ -26,7 +31,7 @@ def test_full_experiment_flow(client):
     exp_id = _create(client, num_prompts=2, samples=2)
 
     # Initially needs a prompt.
-    state = client.get(f"/api/experiments/{exp_id}/state").get_json()
+    state = client.get(f"/api/experiments/{exp_id}/state").json()
     assert state["need_new_prompt"] is True
     assert state["complete"] is False
     assert state["prompt_position"] == 1
@@ -37,12 +42,12 @@ def test_full_experiment_flow(client):
             f"/api/experiments/{exp_id}/prompts", json={"text": f"prompt {p}"}
         )
         assert r.status_code == 201
-        prompt_id = r.get_json()["prompt_id"]
+        prompt_id = r.json()["prompt_id"]
 
         for _ in range(2):  # two samples per prompt
             s = client.post(
                 f"/api/experiments/{exp_id}/sample", json={"prompt_id": prompt_id}
-            ).get_json()
+            ).json()
             assert "comparison_id" in s
             assert len(s["songs"]) == 2
             assert {song["slot"] for song in s["songs"]} == {1, 2}
@@ -51,7 +56,7 @@ def test_full_experiment_flow(client):
             audio_url = s["songs"][0]["url"]
             ar = client.get(audio_url)
             assert ar.status_code == 200
-            assert len(ar.data) > 0
+            assert len(ar.content) > 0
 
             cid = s["comparison_id"]
             cr = client.post(
@@ -62,10 +67,10 @@ def test_full_experiment_flow(client):
 
     assert total_comparisons == 4
 
-    state = client.get(f"/api/experiments/{exp_id}/state").get_json()
+    state = client.get(f"/api/experiments/{exp_id}/state").json()
     assert state["complete"] is True
 
-    res = client.get(f"/api/experiments/{exp_id}/results").get_json()
+    res = client.get(f"/api/experiments/{exp_id}/results").json()
     assert res["n"] == 4
     assert res["primary_wins"] + res["other_wins"] == 4
     assert 0.0 <= res["win_rate"] <= 1.0
@@ -76,14 +81,14 @@ def test_sample_is_idempotent_until_chosen(client):
     exp_id = _create(client, 1, 1)
     pid = client.post(
         f"/api/experiments/{exp_id}/prompts", json={"text": "x"}
-    ).get_json()["prompt_id"]
+    ).json()["prompt_id"]
 
     a = client.post(
         f"/api/experiments/{exp_id}/sample", json={"prompt_id": pid}
-    ).get_json()
+    ).json()
     b = client.post(
         f"/api/experiments/{exp_id}/sample", json={"prompt_id": pid}
-    ).get_json()
+    ).json()
     # Same undecided comparison returned, not a fresh one.
     assert a["comparison_id"] == b["comparison_id"]
 
@@ -92,10 +97,10 @@ def test_cannot_oversample_a_prompt(client):
     exp_id = _create(client, 1, 1)
     pid = client.post(
         f"/api/experiments/{exp_id}/prompts", json={"text": "x"}
-    ).get_json()["prompt_id"]
+    ).json()["prompt_id"]
     s = client.post(
         f"/api/experiments/{exp_id}/sample", json={"prompt_id": pid}
-    ).get_json()
+    ).json()
     client.post(f"/api/comparisons/{s['comparison_id']}/choose", json={"winner_slot": 2})
 
     # Prompt is full now; sampling again should be rejected.
@@ -128,18 +133,18 @@ def test_generate_all_prepares_every_pair(client):
     exp_id = _create(client, num_prompts=1, samples=3)
     pid = client.post(
         f"/api/experiments/{exp_id}/prompts", json={"text": "disco"}
-    ).get_json()["prompt_id"]
+    ).json()["prompt_id"]
 
     # Before generating, the prompt needs generation.
-    cp = client.get(f"/api/experiments/{exp_id}/state").get_json()["current_prompt"]
+    cp = client.get(f"/api/experiments/{exp_id}/state").json()["current_prompt"]
     assert cp["needs_generation"] is True
 
     r = client.post(f"/api/experiments/{exp_id}/generate_all", json={"prompt_id": pid})
     assert r.status_code == 200
-    assert r.get_json()["samples"] == 3
+    assert r.json()["samples"] == 3
 
     # Now fully generated; no more generation needed.
-    cp = client.get(f"/api/experiments/{exp_id}/state").get_json()["current_prompt"]
+    cp = client.get(f"/api/experiments/{exp_id}/state").json()["current_prompt"]
     assert cp["needs_generation"] is False
 
     # All three pre-generated pairs can be revealed and chosen, instantly.
@@ -147,14 +152,14 @@ def test_generate_all_prepares_every_pair(client):
     for _ in range(3):
         s = client.post(
             f"/api/experiments/{exp_id}/sample", json={"prompt_id": pid}
-        ).get_json()
+        ).json()
         seen.add(s["comparison_id"])
         client.post(
             f"/api/comparisons/{s['comparison_id']}/choose", json={"winner_slot": 1}
         )
     assert len(seen) == 3  # three distinct pre-generated pairs
 
-    state = client.get(f"/api/experiments/{exp_id}/state").get_json()
+    state = client.get(f"/api/experiments/{exp_id}/state").json()
     assert state["complete"] is True
 
 
@@ -162,15 +167,43 @@ def test_generate_all_is_idempotent(client):
     exp_id = _create(client, num_prompts=1, samples=2)
     pid = client.post(
         f"/api/experiments/{exp_id}/prompts", json={"text": "x"}
-    ).get_json()["prompt_id"]
+    ).json()["prompt_id"]
     client.post(f"/api/experiments/{exp_id}/generate_all", json={"prompt_id": pid})
     # Second call should not create extra pairs.
     r = client.post(f"/api/experiments/{exp_id}/generate_all", json={"prompt_id": pid})
     assert r.status_code == 200
-    assert r.get_json()["generated"] == 0
+    assert r.json()["generated"] == 0
+
+
+def test_concurrent_generate_all_does_not_duplicate_work(client, monkeypatch):
+    exp_id = _create(client, num_prompts=1, samples=2)
+    pid = client.post(
+        f"/api/experiments/{exp_id}/prompts", json={"text": "parallel"}
+    ).json()["prompt_id"]
+
+    original_generate = service._generate_with_retry
+
+    def slow_generate(provider_name, prompt_text, clip_seconds, attempts=4):
+        time.sleep(0.05)
+        return original_generate(provider_name, prompt_text, clip_seconds, attempts)
+
+    monkeypatch.setattr(service, "_generate_with_retry", slow_generate)
+
+    def generate_all(_):
+        return client.post(
+            f"/api/experiments/{exp_id}/generate_all", json={"prompt_id": pid}
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = list(executor.map(generate_all, range(2)))
+
+    assert [r.status_code for r in responses] == [200, 200]
+    assert sorted(r.json()["generated"] for r in responses) == [0, 4]
+    assert db.session.query(Comparison).count() == 2
+    assert db.session.query(Generation).count() == 4
 
 
 def test_experiment_records_user(client):
     exp_id = _create(client, 1, 1, user_email="jacklaurenson@gmail.com")
-    state = client.get(f"/api/experiments/{exp_id}/state").get_json()
+    state = client.get(f"/api/experiments/{exp_id}/state").json()
     assert state["user_email"] == "jacklaurenson@gmail.com"

@@ -2,6 +2,7 @@ import os
 import tempfile
 
 import pytest
+from fastapi.testclient import TestClient
 
 # Force the mock generator so tests never hit a real API.
 os.environ["FINETUNES_USE_MOCK"] = "true"
@@ -20,10 +21,9 @@ def app():
     cfg.CLIP_SECONDS = 1  # keep mock synthesis fast in tests
     app = create_app(cfg)
     yield app
-    with app.app_context():
-        db.session.remove()
+    db.session.remove()
 
 
 @pytest.fixture()
 def client(app):
-    return app.test_client()
+    return TestClient(app)

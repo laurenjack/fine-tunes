@@ -2,7 +2,10 @@
 import os
 
 from dotenv import load_dotenv
-from flask import Flask
+from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from .config import Config
 from .models import db
@@ -10,20 +13,38 @@ from .models import db
 
 def create_app(config=None):
     load_dotenv()
-    app = Flask(
-        __name__,
-        template_folder=os.path.join(os.path.dirname(__file__), "..", "templates"),
-        static_folder=os.path.join(os.path.dirname(__file__), "..", "static"),
-    )
-    app.config.from_object(config or Config())
+    settings = config or Config()
 
-    os.makedirs(app.config["AUDIO_STORAGE_DIR"], exist_ok=True)
+    app = FastAPI(title="fine-tunes")
+    app.state.config = settings
 
-    db.init_app(app)
-    with app.app_context():
-        db.create_all()
+    os.makedirs(settings.INSTANCE_DIR, exist_ok=True)
+    os.makedirs(settings.AUDIO_STORAGE_DIR, exist_ok=True)
 
-    from .routes import bp
+    db.init_app(settings)
+    db.create_all()
 
-    app.register_blueprint(bp)
+    static_dir = os.path.join(settings.BASE_DIR, "static")
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+    from .routes import router
+
+    app.include_router(router)
+
+    @app.middleware("http")
+    async def database_session_middleware(request, call_next):
+        token = db.begin_request()
+        try:
+            return await call_next(request)
+        finally:
+            db.end_request(token)
+
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request, exc):
+        return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request, exc):
+        return JSONResponse({"error": "invalid request"}, status_code=400)
+
     return app

@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}fine-tunes{% endblock %}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
 </head>
 <body>
   <header class="site-header">
-    <a class="brand" href="{{ url_for('main.index') }}">fine&#8209;tunes</a>
+    <a class="brand" href="{{ url_for('index') }}">fine&#8209;tunes</a>
     <span class="tagline">blind A/B listening tests for AI music</span>
   </header>
   <main class="container">

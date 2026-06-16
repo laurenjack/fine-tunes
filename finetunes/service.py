@@ -7,7 +7,6 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
-from flask import current_app
 
 from .models import Comparison, Experiment, Generation, Prompt, db
 from .providers import PROVIDER_NAMES, get_provider
@@ -44,6 +43,12 @@ def _prompt_lock(prompt_id):
         return lock
 
 
+def _config():
+    if db.config is None:
+        raise RuntimeError("Application config has not been initialised")
+    return db.config
+
+
 def _generate_with_retry(provider_name, prompt_text, clip_seconds, attempts=4):
     """Call a provider, retrying transient failures (429/5xx/timeouts) with backoff."""
     delay = 2.0
@@ -67,7 +72,7 @@ def _generate_with_retry(provider_name, prompt_text, clip_seconds, attempts=4):
 
 
 def create_experiment(num_prompts, samples_per_prompt, user_email):
-    clip_seconds = current_app.config["CLIP_SECONDS"]
+    clip_seconds = _config().CLIP_SECONDS
     exp = Experiment(
         user_email=user_email,
         num_prompts=num_prompts,
@@ -163,7 +168,7 @@ def add_prompt(exp, text):
 
 
 def _storage_dir(experiment_id):
-    base = current_app.config["AUDIO_STORAGE_DIR"]
+    base = _config().AUDIO_STORAGE_DIR
     d = os.path.join(base, str(experiment_id))
     os.makedirs(d, exist_ok=True)
     return d

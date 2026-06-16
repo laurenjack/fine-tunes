@@ -1,6 +1,8 @@
 """Application configuration, read from environment variables."""
 import os
 
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # Known users. The first entry is the default selection in the UI.
 USERS = [
     "james.richardson.2556@gmail.com",
@@ -11,6 +13,8 @@ DEFAULT_USER = USERS[0]
 
 class Config:
     def __init__(self):
+        self.BASE_DIR = BASE_DIR
+        self.INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
         self.SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-me")
         self.SQLALCHEMY_DATABASE_URI = os.environ.get(
             "DATABASE_URL", "sqlite:///finetunes.db"

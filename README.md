@@ -10,13 +10,13 @@ Single user (jacklaurenson@gmail.com) — no auth.
 
 ## Stack
 
-- **Flask** backend + a small vanilla-JS frontend (no build step).
+- **FastAPI** backend + a small vanilla-JS frontend (no build step).
 - **SQLAlchemy** over SQLite by default; point `DATABASE_URL` at Postgres to move hosts.
 - Audio bytes are written to disk under `storage/<experiment_id>/`; the database
   stores each generation's provider, the exact request payload, the file path,
   format and duration.
 - Deployment is intentionally left open (local-first). Because this is a stateful
-  Flask server with a database and file storage, a long-running host (Render /
+  FastAPI server with a database and file storage, a long-running host (Render /
   Fly / Railway) or Vercel-functions + Supabase fits better than Cloudflare Pages.
 
 ## Quick start
@@ -28,6 +28,7 @@ pip install -r requirements.txt
 
 cp .env.example .env          # add API keys when you have them
 python app.py                 # http://127.0.0.1:5001
+# or: uvicorn app:app --reload --port 5001
 ```
 
 Without API keys (or with `FINETUNES_USE_MOCK=true`) the app uses a built-in

@@ -5,11 +5,124 @@ times. Each Comparison pairs two Generations (one per provider) presented in a
 random slot order (1 or 2) so the listener cannot tell which API made which.
 The listener picks a winning slot; we record which provider that was.
 """
+import os
+from contextvars import ContextVar
 from datetime import datetime, timezone
 
-from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy.engine import make_url
+from sqlalchemy.orm import declarative_base, relationship, scoped_session, sessionmaker
 
-db = SQLAlchemy()
+_session_scope = ContextVar("finetunes_session_scope", default=None)
+
+
+class _ConfigMapping:
+    def __init__(self, mapping, instance_dir=None, base_dir=None):
+        self._mapping = mapping
+        self._instance_dir = instance_dir
+        self._base_dir = base_dir
+
+    def __getattr__(self, name):
+        if name in self._mapping:
+            return self._mapping[name]
+        if name == "INSTANCE_DIR" and self._instance_dir:
+            return self._instance_dir
+        if name == "BASE_DIR" and self._base_dir:
+            return self._base_dir
+        raise AttributeError(name)
+
+
+class _Database:
+    """Small SQLAlchemy facade for the old `db.session` call sites."""
+
+    def __init__(self):
+        self.Model = declarative_base()
+        self.session = scoped_session(
+            sessionmaker(autocommit=False, autoflush=False),
+            scopefunc=lambda: _session_scope.get(),
+        )
+        self.engine = None
+        self.config = None
+
+        self.Column = Column
+        self.DateTime = DateTime
+        self.ForeignKey = ForeignKey
+        self.Integer = Integer
+        self.String = String
+        self.Text = Text
+        self.relationship = relationship
+
+    def init_app(self, config):
+        self.session.remove()
+        if self.engine is not None:
+            self.engine.dispose()
+
+        settings = self._coerce_config(config)
+        self.config = settings
+        uri = self._database_uri(settings)
+        connect_args = {}
+        if uri.startswith("sqlite:"):
+            connect_args["check_same_thread"] = False
+            self._ensure_sqlite_parent_dir(uri)
+
+        self.engine = create_engine(uri, connect_args=connect_args)
+        self.session.configure(bind=self.engine)
+        self.Model.query = self.session.query_property()
+
+    @staticmethod
+    def _coerce_config(config):
+        if hasattr(config, "SQLALCHEMY_DATABASE_URI"):
+            return config
+        if hasattr(config, "config"):
+            return _ConfigMapping(
+                config.config,
+                instance_dir=getattr(config, "instance_path", None),
+                base_dir=getattr(config, "root_path", None),
+            )
+        if isinstance(config, dict):
+            return _ConfigMapping(config)
+        return config
+
+    def create_all(self):
+        if self.engine is None:
+            raise RuntimeError("Database has not been initialised")
+        self.Model.metadata.create_all(self.engine)
+
+    def drop_all(self):
+        if self.engine is None:
+            raise RuntimeError("Database has not been initialised")
+        self.Model.metadata.drop_all(self.engine)
+
+    def begin_request(self):
+        return _session_scope.set(object())
+
+    def end_request(self, token):
+        self.session.remove()
+        _session_scope.reset(token)
+
+    def _database_uri(self, config):
+        uri = config.SQLALCHEMY_DATABASE_URI
+        url = make_url(uri)
+        database = url.database
+        if (
+            url.drivername.startswith("sqlite")
+            and database
+            and database != ":memory:"
+            and not os.path.isabs(database)
+        ):
+            instance_dir = getattr(config, "INSTANCE_DIR", os.path.abspath("instance"))
+            return "sqlite:///" + os.path.join(instance_dir, database)
+        return uri
+
+    @staticmethod
+    def _ensure_sqlite_parent_dir(uri):
+        url = make_url(uri)
+        database = url.database
+        if database and database != ":memory:":
+            os.makedirs(os.path.dirname(os.path.abspath(database)), exist_ok=True)
+
+
+db = _Database()
 
 
 def _utcnow():
