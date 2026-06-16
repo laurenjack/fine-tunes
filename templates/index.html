@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}fine-tunes — start{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Start an experiment</h1>
+  <p class="muted">
+    Each prompt is sampled a number of times. Every sample generates one clip
+    from <strong>ElevenLabs Music</strong> and one from <strong>Stable Audio</strong>,
+    played back blind in random order. You pick the one you prefer.
+  </p>
+  {% if mocking %}
+  <p class="banner">
+    No API keys detected — running with the local <em>mock</em> generator.
+    Add keys to <code>.env</code> to use the real services.
+  </p>
+  {% endif %}
+
+  <form id="start-form" class="form">
+    <label>
+      User
+      <select name="user_email" required>
+        {% for u in users %}
+        <option value="{{ u }}" {% if u == default_user %}selected{% endif %}>{{ u }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Prompts
+      <input type="number" name="num_prompts" min="1" value="2" required>
+    </label>
+    <label>
+      Samples per prompt
+      <input type="number" name="samples_per_prompt" min="1" value="3" required>
+    </label>
+    <button type="submit" class="btn primary">Run</button>
+  </form>
+  <p id="start-error" class="error" hidden></p>
+</section>
+
+<section class="card">
+  <h2>Continue an experiment</h2>
+  <form id="continue-form" class="form inline">
+    <label>
+      Experiment ID
+      <input type="number" name="exp_id" min="1" required>
+    </label>
+    <button type="submit" class="btn">Continue</button>
+  </form>
+</section>
+
+<script>
+document.getElementById("start-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const errEl = document.getElementById("start-error");
+  errEl.hidden = true;
+  const resp = await fetch("/api/experiments", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      user_email: fd.get("user_email"),
+      num_prompts: Number(fd.get("num_prompts")),
+      samples_per_prompt: Number(fd.get("samples_per_prompt")),
+    }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) { errEl.textContent = data.error || "Failed"; errEl.hidden = false; return; }
+  window.location.href = data.url;
+});
+
+document.getElementById("continue-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const id = new FormData(e.target).get("exp_id");
+  window.location.href = "/experiment/" + id;
+});
+</script>
+{% endblock %}

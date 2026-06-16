@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}fine-tunes — results {{ results.experiment_id }}{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Results — experiment #{{ results.experiment_id }}</h1>
+
+  {% if results.n == 0 %}
+    <p class="muted">No decided comparisons yet.</p>
+    <a class="btn primary" href="{{ url_for('main.index') }}">Back Home</a>
+  {% else %}
+    {% set pct = (results.win_rate * 100) | round(1) %}
+    {% set lo = (results.ci_low * 100) | round(1) %}
+    {% set hi = (results.ci_high * 100) | round(1) %}
+    <p class="big-stat">
+      <strong>ElevenLabs Music</strong> win rate:
+      <span class="rate">{{ pct }}%</span>
+    </p>
+    <p class="muted">
+      95% confidence interval: {{ lo }}% – {{ hi }}% &nbsp;(Wilson score)
+    </p>
+
+    <div class="bar" title="{{ pct }}% ElevenLabs">
+      <div class="bar-fill" style="width: {{ pct }}%"></div>
+    </div>
+
+    <table class="tally">
+      <tr><td>ElevenLabs wins</td><td>{{ results.primary_wins }}</td></tr>
+      <tr><td>Stable Audio wins</td><td>{{ results.other_wins }}</td></tr>
+      <tr><td>Decided comparisons</td><td>{{ results.n }}</td></tr>
+    </table>
+
+    {% if planned is defined %}
+      <p class="muted">
+        {% if complete %}This experiment is finished ({{ results.n }} of {{ planned }} comparisons). Its data is saved.
+        {% else %}In progress — {{ results.n }} of {{ planned }} comparisons done so far.{% endif %}
+      </p>
+    {% endif %}
+    <a class="btn primary" href="{{ url_for('main.index') }}">Back Home</a>
+  {% endif %}
+</section>
+{% endblock %}

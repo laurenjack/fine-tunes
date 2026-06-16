@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}fine-tunes — experiment {{ experiment.id }}{% endblock %}
+{% block content %}
+<section class="card" id="app" data-exp-id="{{ experiment.id }}">
+  <div class="exp-head">
+    <h1>Experiment #{{ experiment.id }}</h1>
+    <div id="progress" class="progress muted"></div>
+  </div>
+
+  <!-- Prompt entry -->
+  <div id="prompt-phase" class="phase" hidden>
+    <label class="prompt-label">
+      Describe the music to generate
+      <textarea id="prompt-text" rows="2"
+        placeholder="e.g. dreamy lo-fi hip hop with a warm vinyl crackle"></textarea>
+    </label>
+    <button id="prompt-submit" class="btn primary">Use this prompt</button>
+  </div>
+
+  <!-- Generating all sample pairs for the current prompt -->
+  <div id="generating-phase" class="phase" hidden>
+    <div class="generating">
+      <span class="spinner" aria-hidden="true"></span>
+      <span>Generating All Samples…</span>
+    </div>
+    <p class="muted">Creating every sample pair for this prompt up front, so there's no wait between them.</p>
+  </div>
+
+  <!-- Sampling / comparison -->
+  <div id="sample-phase" class="phase" hidden>
+    <p class="current-prompt">Prompt: &ldquo;<span id="current-prompt-text"></span>&rdquo;</p>
+    <button id="sample-btn" class="btn primary">Sample Next</button>
+
+    <div id="compare" hidden>
+      <p class="muted">Listen to both, then choose the one you prefer.</p>
+      <div class="songs">
+        <div class="song" data-slot="1">
+          <h3>Song 1</h3>
+          <audio data-slot="1" controls preload="auto"></audio>
+          <span class="played-badge" data-slot="1" hidden>played ✓</span>
+        </div>
+        <div class="song" data-slot="2">
+          <h3>Song 2</h3>
+          <audio data-slot="2" controls preload="auto"></audio>
+          <span class="played-badge" data-slot="2" hidden>played ✓</span>
+        </div>
+      </div>
+      <div class="choices">
+        <button class="btn choice" data-choice="1" disabled>Prefer Song 1</button>
+        <button class="btn choice" data-choice="2" disabled>Prefer Song 2</button>
+      </div>
+      <p class="hint muted" id="choose-hint">Start playing both songs to unlock the choice.</p>
+    </div>
+  </div>
+
+  <!-- Done -->
+  <div id="done-phase" class="phase" hidden>
+    <h2>All done 🎉</h2>
+    <p>You've completed every comparison in this experiment.</p>
+    <a class="btn primary" id="results-link">See the results</a>
+  </div>
+
+  <p id="error" class="error" hidden></p>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='experiment.js') }}"></script>
+{% endblock %}
