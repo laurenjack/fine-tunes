@@ -41,8 +41,16 @@
   <h2>Continue an experiment</h2>
   <form id="continue-form" class="form inline">
     <label>
-      Experiment ID
-      <input type="number" name="exp_id" min="1" required>
+      Experiment
+      <select name="exp_id" {% if not experiments %}disabled{% endif %}>
+        {% if experiments %}
+        {% for exp in experiments %}
+        <option value="{{ exp.id }}">#{{ exp.id }} — {{ exp.user_email }} — {{ exp.decided }}/{{ exp.planned }}, {{ "complete" if exp.complete else "in progress" }}</option>
+        {% endfor %}
+        {% else %}
+        <option disabled selected>No experiments yet</option>
+        {% endif %}
+      </select>
     </label>
     <button type="submit" class="btn">Continue</button>
   </form>
@@ -71,6 +79,7 @@ document.getElementById("start-form").addEventListener("submit", async (e) => {
 document.getElementById("continue-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const id = new FormData(e.target).get("exp_id");
+  if (!id) return;
   window.location.href = "/experiment/" + id;
 });
 </script>

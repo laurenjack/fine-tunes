@@ -2,8 +2,11 @@
 import json
 import os
 import random
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import requests
 from flask import current_app
 
 from .models import Comparison, Experiment, Generation, Prompt, db
@@ -13,6 +16,40 @@ from .stats import wilson_interval
 # The provider we report the win rate *for*. The other provider's rate is 1 - x
 # (excluding any undecided comparisons).
 PRIMARY_PROVIDER = "elevenlabs"
+
+# Max concurrent in-flight requests per provider during batch generation.
+# ElevenLabs Music enforces a per-tier concurrency cap (Free 2, Starter 3,
+# Creator 5, Pro 10, Scale/Business 15) and returns 429 too_many_concurrent_
+# _requests beyond it — so we queue rather than exceed it. Defaults are
+# Free-safe; override via env for a higher tier.
+_MAX_CONCURRENCY = {
+    "elevenlabs": int(os.environ.get("ELEVENLABS_MAX_CONCURRENCY", "2")),
+    "stable_audio": int(os.environ.get("FAL_MAX_CONCURRENCY", "4")),
+}
+# HTTP statuses worth retrying with backoff (transient: system_busy / 5xx).
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+
+def _generate_with_retry(provider_name, prompt_text, clip_seconds, attempts=4):
+    """Call a provider, retrying transient failures (429/5xx/timeouts) with backoff."""
+    delay = 2.0
+    for attempt in range(attempts):
+        provider = get_provider(provider_name)
+        try:
+            return provider.generate(prompt_text, clip_seconds)
+        except requests.HTTPError as exc:
+            status = getattr(exc.response, "status_code", None)
+            if status in _RETRYABLE_STATUS and attempt < attempts - 1:
+                time.sleep(delay)
+                delay *= 2
+                continue
+            raise
+        except requests.RequestException:  # timeouts, connection errors
+            if attempt < attempts - 1:
+                time.sleep(delay)
+                delay *= 2
+                continue
+            raise
 
 
 def create_experiment(num_prompts, samples_per_prompt, user_email):
@@ -241,10 +278,14 @@ def generate_all(exp, prompt):
     clip_seconds = exp.clip_seconds
     tasks = [(g.id, g.provider) for g in todo]
 
+    # One semaphore per provider so we never exceed its concurrency cap
+    # (ElevenLabs 429s beyond its per-tier limit).
+    sems = {name: threading.Semaphore(_MAX_CONCURRENCY.get(name, 2)) for name in PROVIDER_NAMES}
+
     def _work(gen_id, provider_name):
         # Network only — no DB or app context touched off the main thread.
-        provider = get_provider(provider_name)
-        return gen_id, provider.generate(prompt_text, clip_seconds)
+        with sems[provider_name]:
+            return gen_id, _generate_with_retry(provider_name, prompt_text, clip_seconds)
 
     generated = 0
     failed = 0

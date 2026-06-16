@@ -28,8 +28,22 @@ _MIME = {"mp3": "audio/mpeg", "wav": "audio/wav"}
 @bp.route("/")
 def index():
     mocking = is_mock("elevenlabs") or is_mock("stable_audio")
+    experiments = [
+        {
+            "id": exp.id,
+            "user_email": exp.user_email,
+            "decided": service.results(exp)["n"],
+            "planned": exp.num_prompts * exp.samples_per_prompt,
+            "complete": service.experiment_state(exp)["complete"],
+        }
+        for exp in Experiment.query.order_by(Experiment.id.desc()).all()
+    ]
     return render_template(
-        "index.html", mocking=mocking, users=USERS, default_user=DEFAULT_USER
+        "index.html",
+        mocking=mocking,
+        users=USERS,
+        default_user=DEFAULT_USER,
+        experiments=experiments,
     )
 
 
