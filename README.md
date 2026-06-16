@@ -6,6 +6,10 @@ and one from **Stable Audio 3.0** (via fal), plays them back blind in random ord
 and you pick the one you prefer. After the experiment you get an overall
 ElevenLabs win rate with a 95% Wilson confidence interval.
 
+The rollout section captures on-policy RL preference data: each prompt produces
+six outputs from the active rollout policy, the listener ranks the full set from
+best to worst, and the app stores an exportable ranking record.
+
 Single user (jacklaurenson@gmail.com) — no auth.
 
 ## Stack
@@ -35,6 +39,9 @@ Without API keys (or with `FINETUNES_USE_MOCK=true`) the app uses a built-in
 **mock generator** that synthesises distinct tones, so the entire flow is
 usable offline. Drop real keys into `.env` to call the live services.
 
+Rollouts default to `ROLLOUT_PROVIDER=elevenlabs`; set `ROLLOUT_POLICY_NAME`
+to label the active LoRA/policy version in saved ranking exports.
+
 ## Data model
 
 | Table         | Holds                                                              |
@@ -43,11 +50,15 @@ usable offline. Drop real keys into `.env` to call the live services.
 | `prompts`     | the music descriptions you enter, ordered within an experiment     |
 | `comparisons` | one A/B trial; the chosen slot + winning provider                  |
 | `generations` | one clip: provider, request payload, audio path/format/duration    |
+| `rollouts` | an on-policy ranking run: user, prompt count, policy, clip seconds |
+| `rollout_prompts` | one rollout prompt plus `ranked_at` when its ranking is saved |
+| `rollout_candidates` | six generated outputs with display slot and rank position |
 
 ## API
 
 | Method | Path | Purpose |
 |--------|------|---------|
+| GET | `/api/experiments` | overview rows for all experiments |
 | POST | `/api/experiments` | create; returns id + url |
 | GET | `/api/experiments/<id>/state` | current step (prompt entry / sampling / done) |
 | POST | `/api/experiments/<id>/prompts` | add a prompt |
@@ -55,6 +66,15 @@ usable offline. Drop real keys into `.env` to call the live services.
 | POST | `/api/comparisons/<id>/choose` | record the preferred slot |
 | GET | `/api/experiments/<id>/results` | win rate + Wilson CI |
 | GET | `/api/audio/<gen_id>` | serve a clip (anonymous — no provider in URL) |
+| GET | `/api/rollouts` | overview rows for rollout sessions |
+| POST | `/api/rollouts` | create a rollout; returns id + url |
+| GET | `/api/rollouts/<id>/state` | current step (prompt entry / generation / ranking / done) |
+| POST | `/api/rollouts/<id>/prompts` | add a rollout prompt |
+| POST | `/api/rollouts/<id>/generate` | generate six on-policy outputs |
+| POST | `/api/rollout-prompts/<id>/rank` | persist a best-to-worst slot ranking |
+| GET | `/api/rollouts/<id>/rankings` | RL-ready ranking export for one rollout |
+| GET | `/api/rollouts/rankings` | RL-ready ranking export for all rollouts |
+| GET | `/api/rollout-candidates/<id>/audio` | serve a rollout candidate clip |
 
 ## Tests
 

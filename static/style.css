@@ -25,7 +25,10 @@ body {
 }
 .brand { color: var(--ink); font-weight: 700; text-decoration: none; font-size: 1.25rem; }
 .tagline { color: var(--muted); font-size: .85rem; }
-.container { max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+.site-nav { margin-left: auto; display: flex; gap: .75rem; font-size: .9rem; }
+.site-nav a { color: var(--muted); text-decoration: none; }
+.site-nav a:hover { color: var(--ink); }
+.container { max-width: 1040px; margin: 2rem auto; padding: 0 1rem; }
 .card {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -33,6 +36,7 @@ body {
   padding: 1.5rem;
   margin-bottom: 1.5rem;
 }
+.card.wide { padding: 1.25rem; }
 h1 { margin-top: 0; }
 .muted { color: var(--muted); }
 .error { color: var(--error); }
@@ -44,6 +48,8 @@ h1 { margin-top: 0; }
   font-size: .9rem;
 }
 code { background: #000; padding: .1rem .35rem; border-radius: 4px; }
+.overview-link { margin-bottom: 0; }
+.overview-link a { color: var(--ink); }
 
 .form { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; }
 .form.inline { align-items: flex-end; }
@@ -109,3 +115,126 @@ textarea { width: 100%; resize: vertical; font-family: inherit; }
 .tally { border-collapse: collapse; margin: 1rem 0; }
 .tally td { padding: .35rem 1rem .35rem 0; border-bottom: 1px solid var(--line); }
 .tally td:last-child { text-align: right; font-weight: 600; }
+
+.section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+.section-head h1,
+.section-head h2 { margin-bottom: .25rem; }
+.section-head p { margin: 0; }
+.table-wrap { overflow-x: auto; }
+.overview-table {
+  width: 100%;
+  min-width: 840px;
+  border-collapse: collapse;
+}
+.overview-table th,
+.overview-table td {
+  border-bottom: 1px solid var(--line);
+  padding: .65rem .75rem;
+  text-align: left;
+  vertical-align: top;
+}
+.overview-table th {
+  color: var(--muted);
+  font-size: .78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.overview-table a { color: var(--ink); text-decoration: none; font-weight: 600; }
+.overview-table a:hover { color: var(--accent); }
+.prompt-cell {
+  max-width: 280px;
+  color: var(--ink);
+}
+.ranking-cell {
+  max-width: 260px;
+  white-space: normal;
+}
+.numeric {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.rollout-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+.rollout-candidate {
+  min-width: 0;
+}
+.rollout-candidate.ranked {
+  border-color: var(--accent-2);
+}
+.rollout-candidate-meta {
+  min-height: 1.6rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .5rem;
+  margin: .35rem 0 .7rem;
+}
+.rank-badge {
+  display: inline-block;
+  color: #0c0e12;
+  background: var(--accent-2);
+  border-radius: 999px;
+  padding: .1rem .45rem;
+  font-size: .78rem;
+  font-weight: 700;
+}
+.rank-choice {
+  width: 100%;
+}
+.ranking-panel {
+  border-top: 1px solid var(--line);
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+}
+.ranking-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.ranking-head h2 { margin: 0; }
+.ranking-list {
+  min-height: 7.5rem;
+  margin: 1rem 0;
+  padding-left: 1.35rem;
+}
+.ranking-list li {
+  padding: .2rem 0;
+}
+
+@media (max-width: 640px) {
+  .site-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .site-nav {
+    margin-left: 0;
+    width: 100%;
+  }
+  .section-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .songs,
+  .rollout-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 920px) {
+  .rollout-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

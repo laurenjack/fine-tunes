@@ -6,7 +6,7 @@
 
   {% if results.n == 0 %}
     <p class="muted">No decided comparisons yet.</p>
-    <a class="btn primary" href="{{ url_for('index') }}">Back Home</a>
+    <a class="btn primary" href="{{ url_for('experiments_overview') }}">Back to experiments</a>
   {% else %}
     {% set pct = (results.win_rate * 100) | round(1) %}
     {% set lo = (results.ci_low * 100) | round(1) %}
@@ -35,7 +35,7 @@
         {% else %}In progress — {{ results.n }} of {{ planned }} comparisons done so far.{% endif %}
       </p>
     {% endif %}
-    <a class="btn primary" href="{{ url_for('index') }}">Back Home</a>
+    <a class="btn primary" href="{{ url_for('experiments_overview') }}">Back to experiments</a>
   {% endif %}
 </section>
 {% endblock %}

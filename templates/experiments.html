@@ -1,16 +1,16 @@
 {% extends "base.html" %}
-{% block title %}fine-tunes — start{% endblock %}
+{% block title %}fine-tunes - experiments{% endblock %}
 {% block content %}
 <section class="card">
-  <h1>Start an experiment</h1>
+  <h1>Experiments</h1>
   <p class="muted">
     Each prompt is sampled a number of times. Every sample generates one clip
     from <strong>ElevenLabs Music</strong> and one from <strong>Stable Audio</strong>,
-    played back blind in random order. You pick the one you prefer.
+    played back blind in random order. Pick the one you prefer.
   </p>
   {% if mocking %}
   <p class="banner">
-    No API keys detected — running with the local <em>mock</em> generator.
+    No API keys detected - running with the local <em>mock</em> generator.
     Add keys to <code>.env</code> to use the real services.
   </p>
   {% endif %}
@@ -32,28 +32,53 @@
       Samples per prompt
       <input type="number" name="samples_per_prompt" min="1" value="3" required>
     </label>
-    <button type="submit" class="btn primary">Run</button>
+    <button type="submit" class="btn primary">Run experiment</button>
   </form>
   <p id="start-error" class="error" hidden></p>
 </section>
 
-<section class="card">
-  <h2>Continue an experiment</h2>
-  <form id="continue-form" class="form inline">
-    <label>
-      Experiment
-      <select name="exp_id" {% if not experiments %}disabled{% endif %}>
-        {% if experiments %}
+<section class="card wide">
+  <div class="section-head">
+    <div>
+      <h2>Experiment overview</h2>
+      <p class="muted">All experiments, vote totals, confidence, and current winner.</p>
+    </div>
+  </div>
+
+  {% if experiments %}
+  <div class="table-wrap">
+    <table class="overview-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Prompt</th>
+          <th>Model A</th>
+          <th>Votes A</th>
+          <th>Model B</th>
+          <th>Votes B</th>
+          <th>Confidence</th>
+          <th>Winner</th>
+        </tr>
+      </thead>
+      <tbody>
         {% for exp in experiments %}
-        <option value="{{ exp.id }}">#{{ exp.id }} — {{ exp.user_email }} — {{ exp.decided }}/{{ exp.planned }}, {{ "complete" if exp.complete else "in progress" }}</option>
+        <tr>
+          <td><a href="{{ exp.url }}">#{{ exp.id }}</a></td>
+          <td class="prompt-cell" title="{{ exp.prompt_full }}">{{ exp.prompt }}</td>
+          <td>{{ exp.model_a_name }}</td>
+          <td class="numeric">{{ exp.model_a_votes }}</td>
+          <td>{{ exp.model_b_name }}</td>
+          <td class="numeric">{{ exp.model_b_votes }}</td>
+          <td class="numeric">{{ exp.confidence_score_label }}</td>
+          <td>{{ exp.winning_model_name }}</td>
+        </tr>
         {% endfor %}
-        {% else %}
-        <option disabled selected>No experiments yet</option>
-        {% endif %}
-      </select>
-    </label>
-    <button type="submit" class="btn">Continue</button>
-  </form>
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">No experiments yet.</p>
+  {% endif %}
 </section>
 
 <script>
@@ -74,13 +99,6 @@ document.getElementById("start-form").addEventListener("submit", async (e) => {
   const data = await resp.json();
   if (!resp.ok) { errEl.textContent = data.error || "Failed"; errEl.hidden = false; return; }
   window.location.href = data.url;
-});
-
-document.getElementById("continue-form").addEventListener("submit", (e) => {
-  e.preventDefault();
-  const id = new FormData(e.target).get("exp_id");
-  if (!id) return;
-  window.location.href = "/experiment/" + id;
 });
 </script>
 {% endblock %}

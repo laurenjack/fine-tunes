@@ -27,6 +27,12 @@ def test_ids_start_at_one_and_increment(client):
     assert _create(client, 1, 1) == 2
 
 
+def test_root_routes_to_experiments(client):
+    response = client.get("/", follow_redirects=False)
+    assert response.status_code == 302
+    assert response.headers["location"] == "/experiments"
+
+
 def test_full_experiment_flow(client):
     exp_id = _create(client, num_prompts=2, samples=2)
 
@@ -201,6 +207,56 @@ def test_concurrent_generate_all_does_not_duplicate_work(client, monkeypatch):
     assert sorted(r.json()["generated"] for r in responses) == [0, 4]
     assert db.session.query(Comparison).count() == 2
     assert db.session.query(Generation).count() == 4
+
+
+def test_experiment_overview_lists_votes_confidence_and_winner(client):
+    prompt_text = (
+        "a very long cinematic synthwave prompt with driving drums and a bright "
+        "lead melody that should be visibly truncated in the overview table"
+    )
+    exp_id = _create(client, num_prompts=1, samples=3)
+    pid = client.post(
+        f"/api/experiments/{exp_id}/prompts", json={"text": prompt_text}
+    ).json()["prompt_id"]
+    assert client.post(
+        f"/api/experiments/{exp_id}/generate_all", json={"prompt_id": pid}
+    ).status_code == 200
+
+    db.session.remove()
+    comparisons = (
+        db.session.query(Comparison)
+        .filter_by(experiment_id=exp_id)
+        .order_by(Comparison.sample_index)
+        .all()
+    )
+    other_provider = next(p for p in service.PROVIDER_NAMES if p != service.PRIMARY_PROVIDER)
+    winners = [service.PRIMARY_PROVIDER, service.PRIMARY_PROVIDER, other_provider]
+    for comparison, provider in zip(comparisons, winners):
+        winner = next(g for g in comparison.generations if g.provider == provider)
+        response = client.post(
+            f"/api/comparisons/{comparison.id}/choose",
+            json={"winner_slot": winner.slot},
+        )
+        assert response.status_code == 200
+
+    overview = client.get("/api/experiments").json()["experiments"][0]
+    assert overview["id"] == exp_id
+    assert overview["prompt"].endswith("...")
+    assert len(overview["prompt"]) <= 80
+    assert overview["prompt_full"] == prompt_text
+    assert overview["model_a_name"] == "ElevenLabs Music"
+    assert overview["model_a_votes"] == 2
+    assert overview["model_b_name"] == "Stable Audio 3.0 (fal)"
+    assert overview["model_b_votes"] == 1
+    assert overview["confidence_score"] is not None
+    assert overview["confidence_score_label"].endswith("%")
+    assert overview["winning_model_name"] == "ElevenLabs Music"
+
+    page = client.get("/experiments")
+    assert page.status_code == 200
+    assert "Experiment overview" in page.text
+    assert "ElevenLabs Music" in page.text
+    assert "Stable Audio 3.0 (fal)" in page.text
 
 
 def test_experiment_records_user(client):

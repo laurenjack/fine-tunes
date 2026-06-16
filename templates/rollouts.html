@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}fine-tunes - rollouts{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Rollouts</h1>
+  <p class="muted">
+    Each prompt generates {{ outputs_per_prompt }} on-policy outputs from the
+    active rollout model. Listen to all of them, then rank the full set from
+    best to worst for RL training.
+  </p>
+  {% if mocking %}
+  <p class="banner">
+    No API keys detected - running with the local <em>mock</em> generator.
+    Add keys to <code>.env</code> to use the real services.
+  </p>
+  {% endif %}
+
+  <form id="rollout-start-form" class="form">
+    <label>
+      User
+      <select name="user_email" required>
+        {% for u in users %}
+        <option value="{{ u }}" {% if u == default_user %}selected{% endif %}>{{ u }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Prompts
+      <input type="number" name="num_prompts" min="1" value="2" required>
+    </label>
+    <label>
+      Outputs per prompt
+      <input type="number" value="{{ outputs_per_prompt }}" disabled>
+    </label>
+    <button type="submit" class="btn primary">Run rollout</button>
+  </form>
+  <p id="rollout-start-error" class="error" hidden></p>
+</section>
+
+<section class="card">
+  <h2>Continue a rollout</h2>
+  <form id="rollout-continue-form" class="form inline">
+    <label>
+      Rollout
+      <select name="rollout_id" {% if not rollout_summaries %}disabled{% endif %}>
+        {% if rollout_summaries %}
+        {% for rollout in rollout_summaries %}
+        <option value="{{ rollout.id }}">#{{ rollout.id }} - {{ rollout.user_email }} - {{ rollout.ranked }}/{{ rollout.planned }}, {{ "complete" if rollout.complete else "in progress" }}</option>
+        {% endfor %}
+        {% else %}
+        <option disabled selected>No rollouts yet</option>
+        {% endif %}
+      </select>
+    </label>
+    <button type="submit" class="btn">Continue</button>
+  </form>
+</section>
+
+<section class="card wide">
+  <div class="section-head">
+    <div>
+      <h2>Rollout overview</h2>
+      <p class="muted">Persisted prompt rankings for on-policy RL data export.</p>
+    </div>
+  </div>
+
+  {% if rollout_rows %}
+  <div class="table-wrap">
+    <table class="overview-table rollout-overview-table">
+      <thead>
+        <tr>
+          <th>Rollout</th>
+          <th>Prompt</th>
+          <th>Policy</th>
+          <th>Status</th>
+          <th>Candidates</th>
+          <th>Best</th>
+          <th>Worst</th>
+          <th>Ranking</th>
+          <th>Export</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rollout_rows %}
+        <tr>
+          <td><a href="{{ row.rollout_url }}">#{{ row.rollout_id }}</a></td>
+          <td class="prompt-cell" title="{{ row.prompt_full }}">{{ row.prompt }}</td>
+          <td>{{ row.policy_name }}</td>
+          <td>{{ row.status }}</td>
+          <td class="numeric">{{ row.candidate_count }}</td>
+          <td>{{ row.best_candidate }}</td>
+          <td>{{ row.worst_candidate }}</td>
+          <td class="ranking-cell">{{ row.ranking }}</td>
+          <td><a href="{{ row.export_url }}">JSON</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">No rollout prompts yet.</p>
+  {% endif %}
+</section>
+
+<script>
+document.getElementById("rollout-start-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const errEl = document.getElementById("rollout-start-error");
+  errEl.hidden = true;
+  const resp = await fetch("/api/rollouts", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      user_email: fd.get("user_email"),
+      num_prompts: Number(fd.get("num_prompts")),
+    }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) { errEl.textContent = data.error || "Failed"; errEl.hidden = false; return; }
+  window.location.href = data.url;
+});
+
+document.getElementById("rollout-continue-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const id = new FormData(e.target).get("rollout_id");
+  if (!id) return;
+  window.location.href = "/rollout/" + id;
+});
+</script>
+{% endblock %}

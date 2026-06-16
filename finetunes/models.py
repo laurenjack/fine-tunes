@@ -4,6 +4,9 @@ An Experiment has N Prompts. Each Prompt is compared M (samples_per_prompt)
 times. Each Comparison pairs two Generations (one per provider) presented in a
 random slot order (1 or 2) so the listener cannot tell which API made which.
 The listener picks a winning slot; we record which provider that was.
+
+A Rollout captures on-policy preference data: one prompt, six candidates from
+the same policy, and a full user ranking for RL training/export.
 """
 import os
 from contextvars import ContextVar
@@ -207,4 +210,65 @@ class Generation(db.Model):
     duration_ms = db.Column(db.Integer, nullable=True)
     status = db.Column(db.String(16), nullable=False, default="pending")  # ok|error
     error = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=_utcnow)
+
+
+class Rollout(db.Model):
+    __tablename__ = "rollouts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_email = db.Column(db.String(255), nullable=False)
+    num_prompts = db.Column(db.Integer, nullable=False)
+    outputs_per_prompt = db.Column(db.Integer, nullable=False, default=6)
+    clip_seconds = db.Column(db.Integer, nullable=False, default=10)
+    provider = db.Column(db.String(64), nullable=False)
+    policy_name = db.Column(db.String(255), nullable=False)
+    created_at = db.Column(db.DateTime, default=_utcnow)
+
+    prompts = db.relationship(
+        "RolloutPrompt", backref="rollout", order_by="RolloutPrompt.order_index"
+    )
+
+
+class RolloutPrompt(db.Model):
+    __tablename__ = "rollout_prompts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    rollout_id = db.Column(
+        db.Integer, db.ForeignKey("rollouts.id"), nullable=False, index=True
+    )
+    order_index = db.Column(db.Integer, nullable=False)
+    text = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=_utcnow)
+    ranked_at = db.Column(db.DateTime, nullable=True)
+
+    candidates = db.relationship(
+        "RolloutCandidate", backref="prompt", order_by="RolloutCandidate.slot"
+    )
+
+    @property
+    def is_ranked(self):
+        return self.ranked_at is not None
+
+
+class RolloutCandidate(db.Model):
+    __tablename__ = "rollout_candidates"
+
+    id = db.Column(db.Integer, primary_key=True)
+    rollout_prompt_id = db.Column(
+        db.Integer, db.ForeignKey("rollout_prompts.id"), nullable=False, index=True
+    )
+    # The display slot the listener sees (1..6), randomised per prompt.
+    slot = db.Column(db.Integer, nullable=False)
+    provider = db.Column(db.String(64), nullable=False)
+    policy_name = db.Column(db.String(255), nullable=False)
+    prompt_text = db.Column(db.Text, nullable=False)
+    request_payload = db.Column(db.Text, nullable=False)
+    audio_path = db.Column(db.String(512), nullable=True)
+    audio_format = db.Column(db.String(16), nullable=True)
+    duration_ms = db.Column(db.Integer, nullable=True)
+    status = db.Column(db.String(16), nullable=False, default="pending")
+    error = db.Column(db.Text, nullable=True)
+    # 1 is best. Null until the user submits the full six-way ranking.
+    rank_position = db.Column(db.Integer, nullable=True)
     created_at = db.Column(db.DateTime, default=_utcnow)

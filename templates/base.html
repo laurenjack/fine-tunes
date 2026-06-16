@@ -8,8 +8,12 @@
 </head>
 <body>
   <header class="site-header">
-    <a class="brand" href="{{ url_for('index') }}">fine&#8209;tunes</a>
+    <a class="brand" href="{{ url_for('experiments_overview') }}">fine&#8209;tunes</a>
     <span class="tagline">blind A/B listening tests for AI music</span>
+    <nav class="site-nav" aria-label="Main">
+      <a href="{{ url_for('experiments_overview') }}">Experiments</a>
+      <a href="{{ url_for('rollouts_overview') }}">Rollouts</a>
+    </nav>
   </header>
   <main class="container">
     {% block content %}{% endblock %}

@@ -15,6 +15,10 @@ from .fal_stable_audio import FalStableAudioProvider
 from .mock import MockProvider
 
 PROVIDER_NAMES = ("elevenlabs", "stable_audio")
+PROVIDER_DISPLAY_NAMES = {
+    "elevenlabs": ElevenLabsProvider.display_name,
+    "stable_audio": FalStableAudioProvider.display_name,
+}
 
 _REAL = {
     "elevenlabs": ElevenLabsProvider,
@@ -48,3 +52,8 @@ def is_mock(name):
 def active_backend(name):
     """Human-readable description of what `name` resolves to right now."""
     return get_provider(name).display_name
+
+
+def display_name(name):
+    """Human-readable model/provider name for experiment reporting."""
+    return PROVIDER_DISPLAY_NAMES.get(name, name)
