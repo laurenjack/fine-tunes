@@ -1,12 +1,20 @@
 """Database models.
 
-An Experiment has N Prompts. Each Prompt is compared M (samples_per_prompt)
-times. Each Comparison pairs two Generations (one per provider) presented in a
-random slot order (1 or 2) so the listener cannot tell which API made which.
-The listener picks a winning slot; we record which provider that was.
+Two flavours of experiment share one schema:
 
-A Rollout captures on-policy preference data: one prompt, six candidates from
-the same policy, and a full user ranking for RL training/export.
+  Experiment(kind='head_to_head') compares two models. Each Prompt produces
+  one Comparison with six Generations: three from model_a and three from
+  model_b. The listener ranks all six (1=best..6=worst). The result reports
+  the cross-pair win rate (Mann-Whitney U) with a Wilson 95% CI.
+
+  Experiment(kind='rollout') produces six on-policy candidates from a single
+  model (model_a). The listener ranks all six; the data is exported as
+  preference pairs for RL preference training. model_b is null.
+
+When model_a == model_b in a head_to_head experiment, slot assignment is
+*deterministic* (side 'a' goes to slots 1-3, side 'b' to slots 4-6) so the
+win rate becomes a position-bias check ("did slots 1-3 systematically beat
+slots 4-6?"). Otherwise slots are shuffled to hide which side is which.
 """
 import os
 from contextvars import ContextVar
@@ -17,6 +25,13 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.orm import declarative_base, relationship, scoped_session, sessionmaker
 
 _session_scope = ContextVar("finetunes_session_scope", default=None)
+
+CANDIDATES_PER_PROMPT = 6
+HALF_CANDIDATES = CANDIDATES_PER_PROMPT // 2  # 3 per side for head-to-head
+
+KIND_HEAD_TO_HEAD = "head_to_head"
+KIND_ROLLOUT = "rollout"
+KINDS = (KIND_HEAD_TO_HEAD, KIND_ROLLOUT)
 
 
 class _ConfigMapping:
@@ -36,7 +51,7 @@ class _ConfigMapping:
 
 
 class _Database:
-    """Small SQLAlchemy facade for the old `db.session` call sites."""
+    """Small SQLAlchemy facade for `db.session` / `db.Model` call sites."""
 
     def __init__(self):
         self.Model = declarative_base()
@@ -135,17 +150,28 @@ def _utcnow():
 class Experiment(db.Model):
     __tablename__ = "experiments"
 
-    # Auto-incrementing integer, starts at 1 for the first experiment.
     id = db.Column(db.Integer, primary_key=True)
     user_email = db.Column(db.String(255), nullable=False)
+    # 'head_to_head' (two models, 3+3 candidates) or 'rollout' (one model, 6).
+    kind = db.Column(db.String(16), nullable=False)
+    model_a = db.Column(db.String(64), nullable=False)   # provider name; always set
+    model_b = db.Column(db.String(64), nullable=True)    # null for rollout
     num_prompts = db.Column(db.Integer, nullable=False)
-    samples_per_prompt = db.Column(db.Integer, nullable=False)
+    candidates_per_prompt = db.Column(db.Integer, nullable=False, default=CANDIDATES_PER_PROMPT)
     clip_seconds = db.Column(db.Integer, nullable=False, default=10)
     created_at = db.Column(db.DateTime, default=_utcnow)
 
     prompts = db.relationship(
         "Prompt", backref="experiment", order_by="Prompt.order_index"
     )
+
+    @property
+    def is_rollout(self):
+        return self.kind == KIND_ROLLOUT
+
+    @property
+    def is_same_model(self):
+        return self.kind == KIND_HEAD_TO_HEAD and self.model_a == self.model_b
 
 
 class Prompt(db.Model):
@@ -160,11 +186,12 @@ class Prompt(db.Model):
     created_at = db.Column(db.DateTime, default=_utcnow)
 
     comparisons = db.relationship(
-        "Comparison", backref="prompt", order_by="Comparison.sample_index"
+        "Comparison", backref="prompt", order_by="Comparison.id"
     )
 
 
 class Comparison(db.Model):
+    """One ranking session per prompt. Holds the 6 candidates."""
     __tablename__ = "comparisons"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -174,22 +201,16 @@ class Comparison(db.Model):
     prompt_id = db.Column(
         db.Integer, db.ForeignKey("prompts.id"), nullable=False, index=True
     )
-    sample_index = db.Column(db.Integer, nullable=False)  # 0-based within prompt
     created_at = db.Column(db.DateTime, default=_utcnow)
-
-    # Set once the listener chooses. winner_slot is 1 or 2; winner_provider is
-    # the provider name behind that slot.
-    winner_slot = db.Column(db.Integer, nullable=True)
-    winner_provider = db.Column(db.String(64), nullable=True)
-    decided_at = db.Column(db.DateTime, nullable=True)
+    ranked_at = db.Column(db.DateTime, nullable=True)
 
     generations = db.relationship(
         "Generation", backref="comparison", order_by="Generation.slot"
     )
 
     @property
-    def is_decided(self):
-        return self.winner_slot is not None
+    def is_ranked(self):
+        return self.ranked_at is not None
 
 
 class Generation(db.Model):
@@ -199,76 +220,23 @@ class Generation(db.Model):
     comparison_id = db.Column(
         db.Integer, db.ForeignKey("comparisons.id"), nullable=False, index=True
     )
-    # The slot the listener sees this in (1 or 2), randomised per comparison.
+    # Display slot the listener sees (1..6).
     slot = db.Column(db.Integer, nullable=False)
-    provider = db.Column(db.String(64), nullable=False)  # "elevenlabs" | "stable_audio"
+    # Which model produced this clip (always a real provider name).
+    provider = db.Column(db.String(64), nullable=False)
+    # 'a' or 'b' — which side of the experiment this belongs to.
+    # For rollout all generations are 'a'. For head-to-head with model_a==model_b
+    # the side label still partitions the six candidates into two halves so the
+    # win rate can detect position bias.
+    side = db.Column(db.String(1), nullable=False)
+    # 1=best..6=worst within this comparison. Null until the user submits the
+    # full six-way ranking.
+    rank_position = db.Column(db.Integer, nullable=True)
     prompt_text = db.Column(db.Text, nullable=False)
-    # The exact request we sent to the provider, as JSON text.
     request_payload = db.Column(db.Text, nullable=False)
     audio_path = db.Column(db.String(512), nullable=True)
-    audio_format = db.Column(db.String(16), nullable=True)  # "mp3" | "wav"
+    audio_format = db.Column(db.String(16), nullable=True)  # 'mp3' | 'wav'
     duration_ms = db.Column(db.Integer, nullable=True)
     status = db.Column(db.String(16), nullable=False, default="pending")  # ok|error
     error = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=_utcnow)
-
-
-class Rollout(db.Model):
-    __tablename__ = "rollouts"
-
-    id = db.Column(db.Integer, primary_key=True)
-    user_email = db.Column(db.String(255), nullable=False)
-    num_prompts = db.Column(db.Integer, nullable=False)
-    outputs_per_prompt = db.Column(db.Integer, nullable=False, default=6)
-    clip_seconds = db.Column(db.Integer, nullable=False, default=10)
-    provider = db.Column(db.String(64), nullable=False)
-    policy_name = db.Column(db.String(255), nullable=False)
-    created_at = db.Column(db.DateTime, default=_utcnow)
-
-    prompts = db.relationship(
-        "RolloutPrompt", backref="rollout", order_by="RolloutPrompt.order_index"
-    )
-
-
-class RolloutPrompt(db.Model):
-    __tablename__ = "rollout_prompts"
-
-    id = db.Column(db.Integer, primary_key=True)
-    rollout_id = db.Column(
-        db.Integer, db.ForeignKey("rollouts.id"), nullable=False, index=True
-    )
-    order_index = db.Column(db.Integer, nullable=False)
-    text = db.Column(db.Text, nullable=False)
-    created_at = db.Column(db.DateTime, default=_utcnow)
-    ranked_at = db.Column(db.DateTime, nullable=True)
-
-    candidates = db.relationship(
-        "RolloutCandidate", backref="prompt", order_by="RolloutCandidate.slot"
-    )
-
-    @property
-    def is_ranked(self):
-        return self.ranked_at is not None
-
-
-class RolloutCandidate(db.Model):
-    __tablename__ = "rollout_candidates"
-
-    id = db.Column(db.Integer, primary_key=True)
-    rollout_prompt_id = db.Column(
-        db.Integer, db.ForeignKey("rollout_prompts.id"), nullable=False, index=True
-    )
-    # The display slot the listener sees (1..6), randomised per prompt.
-    slot = db.Column(db.Integer, nullable=False)
-    provider = db.Column(db.String(64), nullable=False)
-    policy_name = db.Column(db.String(255), nullable=False)
-    prompt_text = db.Column(db.Text, nullable=False)
-    request_payload = db.Column(db.Text, nullable=False)
-    audio_path = db.Column(db.String(512), nullable=True)
-    audio_format = db.Column(db.String(16), nullable=True)
-    duration_ms = db.Column(db.Integer, nullable=True)
-    status = db.Column(db.String(16), nullable=False, default="pending")
-    error = db.Column(db.Text, nullable=True)
-    # 1 is best. Null until the user submits the full six-way ranking.
-    rank_position = db.Column(db.Integer, nullable=True)
     created_at = db.Column(db.DateTime, default=_utcnow)

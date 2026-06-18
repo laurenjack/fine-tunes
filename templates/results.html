@@ -1,41 +1,67 @@
 {% extends "base.html" %}
-{% block title %}fine-tunes — results {{ results.experiment_id }}{% endblock %}
+{% block title %}fine-tunes - results {{ results.experiment_id }}{% endblock %}
 {% block content %}
 <section class="card">
-  <h1>Results — experiment #{{ results.experiment_id }}</h1>
+  <h1>Results - experiment #{{ results.experiment_id }}</h1>
 
-  {% if results.n == 0 %}
-    <p class="muted">No decided comparisons yet.</p>
-    <a class="btn primary" href="{{ url_for('experiments_overview') }}">Back to experiments</a>
-  {% else %}
+  {% if results.kind == "rollout" %}
+    <p class="big-stat">
+      <strong>{{ results.model_a_name }}</strong> rollout:
+      <span class="rate">{{ results.n_prompts_ranked }}</span> ranked prompts
+    </p>
+    <p class="muted">
+      Each ranked prompt yields {{ results.pairs_per_prompt }} preference pairs.
+      Total: <strong>{{ results.preference_pairs }}</strong> ordered preferences
+      available for export.
+    </p>
+    {% if results.n_prompts_ranked > 0 %}
+      <p>
+        <a class="btn primary" href="{{ results.export_url }}">Download preferences (JSON)</a>
+      </p>
+    {% endif %}
+
+  {% elif results.n_pairs and results.n_pairs > 0 %}
     {% set pct = (results.win_rate * 100) | round(1) %}
     {% set lo = (results.ci_low * 100) | round(1) %}
     {% set hi = (results.ci_high * 100) | round(1) %}
+    {% if results.same_model %}
+      {% set a_label = "Slots 1-" ~ (results.candidates_per_prompt // 2) %}
+      {% set b_label = "Slots " ~ (results.candidates_per_prompt // 2 + 1) ~ "-" ~ results.candidates_per_prompt %}
+      {% set header_title = "Position-bias check" %}
+      {% set header_sub = "Same model on both sides; ~50% win rate is healthy. Skew exposes UI position bias." %}
+    {% else %}
+      {% set a_label = results.model_a_name %}
+      {% set b_label = results.model_b_name %}
+      {% set header_title = a_label ~ " vs " ~ b_label %}
+      {% set header_sub = "Cross-pair win rate from full rankings (Mann-Whitney U), with 95% Wilson CI." %}
+    {% endif %}
     <p class="big-stat">
-      <strong>ElevenLabs Music</strong> win rate:
+      <strong>{{ a_label }}</strong> win rate vs <strong>{{ b_label }}</strong>:
       <span class="rate">{{ pct }}%</span>
     </p>
     <p class="muted">
-      95% confidence interval: {{ lo }}% – {{ hi }}% &nbsp;(Wilson score)
+      95% confidence interval: {{ lo }}% - {{ hi }}% &nbsp;(Wilson score on {{ results.n_pairs }} cross-pairs)
     </p>
+    <p class="muted">{{ header_sub }}</p>
 
-    <div class="bar" title="{{ pct }}% ElevenLabs">
+    <div class="bar" title="{{ pct }}% {{ a_label }}">
       <div class="bar-fill" style="width: {{ pct }}%"></div>
     </div>
 
     <table class="tally">
-      <tr><td>ElevenLabs wins</td><td>{{ results.primary_wins }}</td></tr>
-      <tr><td>Stable Audio wins</td><td>{{ results.other_wins }}</td></tr>
-      <tr><td>Decided comparisons</td><td>{{ results.n }}</td></tr>
+      <tr><td>{{ a_label }} wins</td><td>{{ results.a_wins | int }}</td></tr>
+      <tr><td>{{ b_label }} wins</td><td>{{ results.b_wins | int }}</td></tr>
+      <tr><td>Total cross-pairs</td><td>{{ results.n_pairs }}</td></tr>
+      <tr><td>Prompts ranked</td><td>{{ results.n_prompts_ranked }}</td></tr>
     </table>
 
-    {% if planned is defined %}
-      <p class="muted">
-        {% if complete %}This experiment is finished ({{ results.n }} of {{ planned }} comparisons). Its data is saved.
-        {% else %}In progress — {{ results.n }} of {{ planned }} comparisons done so far.{% endif %}
-      </p>
-    {% endif %}
-    <a class="btn primary" href="{{ url_for('experiments_overview') }}">Back to experiments</a>
+  {% else %}
+    <p class="muted">No rankings submitted yet.</p>
   {% endif %}
+
+  {% if complete %}
+    <p class="muted">Experiment finished.</p>
+  {% endif %}
+  <a class="btn primary" href="{{ url_for('experiments_overview') }}">Back to experiments</a>
 </section>
 {% endblock %}

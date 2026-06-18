@@ -25,6 +25,3 @@ class Config:
         self.AUDIO_STORAGE_DIR = os.path.abspath(storage)
         # Each generated song is this many seconds long.
         self.CLIP_SECONDS = int(os.environ.get("CLIP_SECONDS", "10"))
-        # Rollout generation uses one active policy to produce six candidates.
-        self.ROLLOUT_PROVIDER = os.environ.get("ROLLOUT_PROVIDER", "elevenlabs")
-        self.ROLLOUT_POLICY_NAME = os.environ.get("ROLLOUT_POLICY_NAME", "")

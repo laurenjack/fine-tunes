@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}fine-tunes — experiment {{ experiment.id }}{% endblock %}
+{% block title %}fine-tunes - experiment {{ experiment.id }}{% endblock %}
 {% block content %}
-<section class="card" id="app" data-exp-id="{{ experiment.id }}">
+<section class="card wide" id="app" data-exp-id="{{ experiment.id }}">
   <div class="exp-head">
     <h1>Experiment #{{ experiment.id }}</h1>
     <div id="progress" class="progress muted"></div>
@@ -17,46 +17,31 @@
     <button id="prompt-submit" class="btn primary">Use this prompt</button>
   </div>
 
-  <!-- Generating all sample pairs for the current prompt -->
+  <!-- Generating candidates -->
   <div id="generating-phase" class="phase" hidden>
     <div class="generating">
       <span class="spinner" aria-hidden="true"></span>
-      <span>Generating All Samples…</span>
+      <span>Generating 6 candidates...</span>
     </div>
-    <p class="muted">Creating every sample pair for this prompt up front, so there's no wait between them.</p>
+    <p class="muted">This takes ~30 seconds. The ranking grid appears as soon as they're ready.</p>
   </div>
 
-  <!-- Sampling / comparison -->
-  <div id="sample-phase" class="phase" hidden>
+  <!-- Ranking 6 candidates -->
+  <div id="rank-phase" class="phase" hidden>
     <p class="current-prompt">Prompt: &ldquo;<span id="current-prompt-text"></span>&rdquo;</p>
-    <button id="sample-btn" class="btn primary">Sample Next</button>
-
-    <div id="compare" hidden>
-      <p class="muted">Listen to both, then choose the one you prefer.</p>
-      <div class="songs">
-        <div class="song" data-slot="1">
-          <h3>Song 1</h3>
-          <audio data-slot="1" controls preload="auto"></audio>
-          <span class="played-badge" data-slot="1" hidden>played ✓</span>
-        </div>
-        <div class="song" data-slot="2">
-          <h3>Song 2</h3>
-          <audio data-slot="2" controls preload="auto"></audio>
-          <span class="played-badge" data-slot="2" hidden>played ✓</span>
-        </div>
-      </div>
-      <div class="choices">
-        <button class="btn choice" data-choice="1" disabled>Prefer Song 1</button>
-        <button class="btn choice" data-choice="2" disabled>Prefer Song 2</button>
-      </div>
-      <p class="hint muted" id="choose-hint">Start playing both songs to unlock the choice.</p>
+    <p class="muted">Listen to each clip, then <strong>click them in order from best to worst</strong>.
+      Click a ranked card to clear it.</p>
+    <div id="cards" class="cards"></div>
+    <div class="rank-actions">
+      <button id="reset-ranking" class="btn">Clear ranking</button>
+      <button id="submit-ranking" class="btn primary" disabled>Submit ranking</button>
     </div>
   </div>
 
   <!-- Done -->
   <div id="done-phase" class="phase" hidden>
-    <h2>All done 🎉</h2>
-    <p>You've completed every comparison in this experiment.</p>
+    <h2>All done</h2>
+    <p>You've ranked every prompt in this experiment.</p>
     <a class="btn primary" id="results-link">See the results</a>
   </div>
 

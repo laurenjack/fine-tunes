@@ -16,7 +16,7 @@ echo "→ Installing dependencies ..."
 # Use `python -m pip` (not ./venv/bin/pip): the pip console script hardcodes an
 # absolute shebang that breaks if the repo folder is ever renamed/moved.
 # Force public PyPI: some machines default pip to a private, auth-gated index.
-./venv/bin/python -m pip install -q --upgrade pip
+./venv/bin/python -m pip install -q --index-url https://pypi.org/simple/ --upgrade pip
 ./venv/bin/python -m pip install -q --index-url https://pypi.org/simple/ -r requirements.txt pytest
 
 if [ ! -f .env ]; then

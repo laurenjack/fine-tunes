@@ -1,191 +1,300 @@
-"""End-to-end flow test using the mock generator (no real API calls)."""
+"""End-to-end flow tests using the mock generator (no real API calls)."""
 import time
 from concurrent.futures import ThreadPoolExecutor
 
 from finetunes import service
-from finetunes.models import Comparison, Generation, db
+from finetunes.models import (
+    CANDIDATES_PER_PROMPT,
+    HALF_CANDIDATES,
+    Comparison,
+    Experiment,
+    Generation,
+    db,
+)
 
 
 USER = "james.richardson.2556@gmail.com"
 
 
-def _create(client, num_prompts, samples, user_email=USER):
-    r = client.post(
-        "/api/experiments",
-        json={
-            "user_email": user_email,
-            "num_prompts": num_prompts,
-            "samples_per_prompt": samples,
-        },
-    )
-    assert r.status_code == 201
+def _create(client, kind="head_to_head", num_prompts=1, model_a="elevenlabs", model_b="stable_audio", user_email=USER):
+    body = {
+        "user_email": user_email,
+        "kind": kind,
+        "model_a": model_a,
+        "num_prompts": num_prompts,
+    }
+    if kind == "head_to_head":
+        body["model_b"] = model_b
+    r = client.post("/api/experiments", json=body)
+    assert r.status_code == 201, r.text
     return r.json()["id"]
 
 
+def _add_prompt(client, exp_id, text):
+    r = client.post(f"/api/experiments/{exp_id}/prompts", json={"text": text})
+    assert r.status_code == 201, r.text
+    return r.json()["prompt_id"]
+
+
+def _generate(client, exp_id, prompt_id):
+    r = client.post(f"/api/experiments/{exp_id}/generate", json={"prompt_id": prompt_id})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _rank(client, comparison_id, ranked_slots):
+    r = client.post(f"/api/comparisons/{comparison_id}/rank", json={"ranked_slots": ranked_slots})
+    assert r.status_code == 200, r.text
+
+
+# --------------------------------------------------------------------------- #
+# Basic plumbing
+# --------------------------------------------------------------------------- #
 def test_ids_start_at_one_and_increment(client):
-    assert _create(client, 1, 1) == 1
-    assert _create(client, 1, 1) == 2
+    assert _create(client) == 1
+    assert _create(client) == 2
 
 
-def test_root_routes_to_experiments(client):
+def test_root_redirects_to_experiments(client):
     response = client.get("/", follow_redirects=False)
     assert response.status_code == 302
     assert response.headers["location"] == "/experiments"
 
 
-def test_full_experiment_flow(client):
-    exp_id = _create(client, num_prompts=2, samples=2)
-
-    # Initially needs a prompt.
-    state = client.get(f"/api/experiments/{exp_id}/state").json()
-    assert state["need_new_prompt"] is True
-    assert state["complete"] is False
-    assert state["prompt_position"] == 1
-
-    total_comparisons = 0
-    for p in range(2):  # two prompts
-        r = client.post(
-            f"/api/experiments/{exp_id}/prompts", json={"text": f"prompt {p}"}
-        )
-        assert r.status_code == 201
-        prompt_id = r.json()["prompt_id"]
-
-        for _ in range(2):  # two samples per prompt
-            s = client.post(
-                f"/api/experiments/{exp_id}/sample", json={"prompt_id": prompt_id}
-            ).json()
-            assert "comparison_id" in s
-            assert len(s["songs"]) == 2
-            assert {song["slot"] for song in s["songs"]} == {1, 2}
-
-            # Audio is served and anonymous (URL is by generation id only).
-            audio_url = s["songs"][0]["url"]
-            ar = client.get(audio_url)
-            assert ar.status_code == 200
-            assert len(ar.content) > 0
-
-            cid = s["comparison_id"]
-            cr = client.post(
-                f"/api/comparisons/{cid}/choose", json={"winner_slot": 1}
-            )
-            assert cr.status_code == 200
-            total_comparisons += 1
-
-    assert total_comparisons == 4
-
-    state = client.get(f"/api/experiments/{exp_id}/state").json()
-    assert state["complete"] is True
-
-    res = client.get(f"/api/experiments/{exp_id}/results").json()
-    assert res["n"] == 4
-    assert res["primary_wins"] + res["other_wins"] == 4
-    assert 0.0 <= res["win_rate"] <= 1.0
-    assert res["ci_low"] <= res["win_rate"] <= res["ci_high"]
-
-
-def test_sample_is_idempotent_until_chosen(client):
-    exp_id = _create(client, 1, 1)
-    pid = client.post(
-        f"/api/experiments/{exp_id}/prompts", json={"text": "x"}
-    ).json()["prompt_id"]
-
-    a = client.post(
-        f"/api/experiments/{exp_id}/sample", json={"prompt_id": pid}
-    ).json()
-    b = client.post(
-        f"/api/experiments/{exp_id}/sample", json={"prompt_id": pid}
-    ).json()
-    # Same undecided comparison returned, not a fresh one.
-    assert a["comparison_id"] == b["comparison_id"]
-
-
-def test_cannot_oversample_a_prompt(client):
-    exp_id = _create(client, 1, 1)
-    pid = client.post(
-        f"/api/experiments/{exp_id}/prompts", json={"text": "x"}
-    ).json()["prompt_id"]
-    s = client.post(
-        f"/api/experiments/{exp_id}/sample", json={"prompt_id": pid}
-    ).json()
-    client.post(f"/api/comparisons/{s['comparison_id']}/choose", json={"winner_slot": 2})
-
-    # Prompt is full now; sampling again should be rejected.
-    r = client.post(f"/api/experiments/{exp_id}/sample", json={"prompt_id": pid})
-    assert r.status_code == 400
-
-
 def test_invalid_experiment_params(client):
     r = client.post(
         "/api/experiments",
-        json={"user_email": USER, "num_prompts": 0, "samples_per_prompt": 1},
+        json={"user_email": USER, "kind": "head_to_head", "model_a": "elevenlabs", "model_b": "stable_audio", "num_prompts": 0},
     )
     assert r.status_code == 400
 
 
 def test_unknown_or_missing_user_rejected(client):
-    r = client.post(
-        "/api/experiments",
-        json={"num_prompts": 2, "samples_per_prompt": 2},  # no user
-    )
+    r = client.post("/api/experiments", json={"kind": "head_to_head", "model_a": "elevenlabs", "model_b": "stable_audio", "num_prompts": 1})
     assert r.status_code == 400
     r = client.post(
         "/api/experiments",
-        json={"user_email": "nope@example.com", "num_prompts": 2, "samples_per_prompt": 2},
+        json={"user_email": "nope@example.com", "kind": "head_to_head", "model_a": "elevenlabs", "model_b": "stable_audio", "num_prompts": 1},
     )
     assert r.status_code == 400
 
 
-def test_generate_all_prepares_every_pair(client):
-    exp_id = _create(client, num_prompts=1, samples=3)
-    pid = client.post(
-        f"/api/experiments/{exp_id}/prompts", json={"text": "disco"}
-    ).json()["prompt_id"]
+def test_unknown_kind_rejected(client):
+    r = client.post(
+        "/api/experiments",
+        json={"user_email": USER, "kind": "bogus", "model_a": "elevenlabs", "model_b": "stable_audio", "num_prompts": 1},
+    )
+    assert r.status_code == 400
 
-    # Before generating, the prompt needs generation.
-    cp = client.get(f"/api/experiments/{exp_id}/state").json()["current_prompt"]
-    assert cp["needs_generation"] is True
 
-    r = client.post(f"/api/experiments/{exp_id}/generate_all", json={"prompt_id": pid})
-    assert r.status_code == 200
-    assert r.json()["samples"] == 3
+def test_unknown_model_rejected(client):
+    r = client.post(
+        "/api/experiments",
+        json={"user_email": USER, "kind": "head_to_head", "model_a": "elevenlabs", "model_b": "not-a-model", "num_prompts": 1},
+    )
+    assert r.status_code == 400
 
-    # Now fully generated; no more generation needed.
-    cp = client.get(f"/api/experiments/{exp_id}/state").json()["current_prompt"]
-    assert cp["needs_generation"] is False
 
-    # All three pre-generated pairs can be revealed and chosen, instantly.
-    seen = set()
-    for _ in range(3):
-        s = client.post(
-            f"/api/experiments/{exp_id}/sample", json={"prompt_id": pid}
-        ).json()
-        seen.add(s["comparison_id"])
-        client.post(
-            f"/api/comparisons/{s['comparison_id']}/choose", json={"winner_slot": 1}
-        )
-    assert len(seen) == 3  # three distinct pre-generated pairs
+def test_h2h_requires_model_b(client):
+    r = client.post(
+        "/api/experiments",
+        json={"user_email": USER, "kind": "head_to_head", "model_a": "elevenlabs", "num_prompts": 1},
+    )
+    assert r.status_code == 400
+
+
+def test_experiment_records_user_kind_and_models(client):
+    exp_id = _create(client, kind="head_to_head", model_a="elevenlabs", model_b="stable_audio", user_email="jacklaurenson@gmail.com")
+    state = client.get(f"/api/experiments/{exp_id}/state").json()
+    assert state["user_email"] == "jacklaurenson@gmail.com"
+    assert state["kind"] == "head_to_head"
+    assert state["model_a"] == "elevenlabs"
+    assert state["model_b"] == "stable_audio"
+
+
+# --------------------------------------------------------------------------- #
+# Head-to-head flow (different models)
+# --------------------------------------------------------------------------- #
+def test_h2h_full_flow_and_scoring(client):
+    exp_id = _create(client, kind="head_to_head", num_prompts=2)
+
+    for i in range(2):
+        pid = _add_prompt(client, exp_id, f"prompt {i}")
+        result = _generate(client, exp_id, pid)
+        assert result["candidates"] == CANDIDATES_PER_PROMPT
+
+        # State now exposes a ranking comparison with 6 candidates in random slots.
+        state = client.get(f"/api/experiments/{exp_id}/state").json()
+        oc = state["open_comparison"]
+        slots = [s["slot"] for s in oc["songs"]]
+        assert sorted(slots) == list(range(1, CANDIDATES_PER_PROMPT + 1))
+
+        # Audio is served.
+        ar = client.get(oc["songs"][0]["url"])
+        assert ar.status_code == 200 and ar.content
+
+        # Submit a complete ranking.
+        _rank(client, oc["comparison_id"], slots)
 
     state = client.get(f"/api/experiments/{exp_id}/state").json()
     assert state["complete"] is True
 
-
-def test_generate_all_is_idempotent(client):
-    exp_id = _create(client, num_prompts=1, samples=2)
-    pid = client.post(
-        f"/api/experiments/{exp_id}/prompts", json={"text": "x"}
-    ).json()["prompt_id"]
-    client.post(f"/api/experiments/{exp_id}/generate_all", json={"prompt_id": pid})
-    # Second call should not create extra pairs.
-    r = client.post(f"/api/experiments/{exp_id}/generate_all", json={"prompt_id": pid})
-    assert r.status_code == 200
-    assert r.json()["generated"] == 0
+    res = client.get(f"/api/experiments/{exp_id}/results").json()
+    # 2 prompts * 3*3 cross-pairs each = 18 total.
+    assert res["n_pairs"] == 2 * HALF_CANDIDATES * HALF_CANDIDATES
+    assert res["n_prompts_ranked"] == 2
+    assert 0.0 <= res["win_rate"] <= 1.0
+    assert res["ci_low"] <= res["win_rate"] <= res["ci_high"]
 
 
-def test_concurrent_generate_all_does_not_duplicate_work(client, monkeypatch):
-    exp_id = _create(client, num_prompts=1, samples=2)
-    pid = client.post(
-        f"/api/experiments/{exp_id}/prompts", json={"text": "parallel"}
-    ).json()["prompt_id"]
+def test_h2h_a_winning_ranking_produces_higher_a_win_rate(client):
+    """Ranking model_a's candidates first should push win rate above 50%."""
+    exp_id = _create(client, kind="head_to_head", num_prompts=1)
+    pid = _add_prompt(client, exp_id, "anything")
+    _generate(client, exp_id, pid)
+
+    db.session.remove()
+    comp = db.session.query(Comparison).filter_by(experiment_id=exp_id).one()
+    # Sort: side 'a' first, then side 'b'. Ranking those slots top-to-bottom
+    # means every cross-pair is an A win → win_rate == 1.0.
+    a_slots = sorted(g.slot for g in comp.generations if g.side == "a")
+    b_slots = sorted(g.slot for g in comp.generations if g.side == "b")
+    _rank(client, comp.id, a_slots + b_slots)
+
+    res = client.get(f"/api/experiments/{exp_id}/results").json()
+    assert res["win_rate"] == 1.0
+    assert res["a_wins"] == HALF_CANDIDATES * HALF_CANDIDATES
+    assert res["b_wins"] == 0
+
+
+def test_h2h_different_models_shuffle_slots_between_sides(client):
+    """A != B: each side's candidates should land in a mix of slot positions."""
+    exp_id = _create(client, kind="head_to_head", num_prompts=4)
+
+    db.session.remove()
+    seen_a_in_high_slot = False
+    seen_b_in_low_slot = False
+    for i in range(4):
+        pid = _add_prompt(client, exp_id, f"p{i}")
+        _generate(client, exp_id, pid)
+        db.session.remove()
+        comps = db.session.query(Comparison).filter_by(experiment_id=exp_id).all()
+        comp = comps[i]
+        for g in comp.generations:
+            if g.side == "a" and g.slot > HALF_CANDIDATES:
+                seen_a_in_high_slot = True
+            if g.side == "b" and g.slot <= HALF_CANDIDATES:
+                seen_b_in_low_slot = True
+        # Rank with provided slots so the next prompt is the active one.
+        slots = list(range(1, CANDIDATES_PER_PROMPT + 1))
+        _rank(client, comp.id, slots)
+    assert seen_a_in_high_slot
+    assert seen_b_in_low_slot
+
+
+# --------------------------------------------------------------------------- #
+# Same-model H2H = position bias check
+# --------------------------------------------------------------------------- #
+def test_same_model_h2h_uses_deterministic_slot_layout(client):
+    exp_id = _create(client, kind="head_to_head", model_a="elevenlabs", model_b="elevenlabs", num_prompts=1)
+    pid = _add_prompt(client, exp_id, "anything")
+    _generate(client, exp_id, pid)
+
+    db.session.remove()
+    comp = db.session.query(Comparison).filter_by(experiment_id=exp_id).one()
+    side_by_slot = {g.slot: g.side for g in comp.generations}
+    # Side 'a' lives in low slots, side 'b' in high slots.
+    for slot in range(1, HALF_CANDIDATES + 1):
+        assert side_by_slot[slot] == "a", side_by_slot
+    for slot in range(HALF_CANDIDATES + 1, CANDIDATES_PER_PROMPT + 1):
+        assert side_by_slot[slot] == "b", side_by_slot
+
+
+def test_same_model_h2h_results_label_uses_slot_ranges(client):
+    exp_id = _create(client, kind="head_to_head", model_a="elevenlabs", model_b="elevenlabs", num_prompts=1)
+    pid = _add_prompt(client, exp_id, "anything")
+    _generate(client, exp_id, pid)
+
+    db.session.remove()
+    comp = db.session.query(Comparison).filter_by(experiment_id=exp_id).one()
+    _rank(client, comp.id, list(range(1, CANDIDATES_PER_PROMPT + 1)))
+
+    page = client.get(f"/experiment/{exp_id}/results")
+    assert page.status_code == 200
+    assert "Slots 1-3" in page.text
+    assert "Slots 4-6" in page.text
+
+
+# --------------------------------------------------------------------------- #
+# Rollout flow
+# --------------------------------------------------------------------------- #
+def test_rollout_full_flow_and_preference_export(client):
+    exp_id = _create(client, kind="rollout", model_a="elevenlabs", num_prompts=2)
+
+    state = client.get(f"/api/experiments/{exp_id}/state").json()
+    assert state["kind"] == "rollout"
+    assert state["model_a"] == "elevenlabs"
+    assert state["model_b"] is None
+
+    for i in range(2):
+        pid = _add_prompt(client, exp_id, f"prompt {i}")
+        _generate(client, exp_id, pid)
+        oc = client.get(f"/api/experiments/{exp_id}/state").json()["open_comparison"]
+        _rank(client, oc["comparison_id"], [s["slot"] for s in oc["songs"]])
+
+    res = client.get(f"/api/experiments/{exp_id}/results").json()
+    assert res["kind"] == "rollout"
+    assert res["n_prompts_ranked"] == 2
+    # 6 candidates per prompt → C(6,2) = 15 preference pairs each, 30 total.
+    assert res["pairs_per_prompt"] == 15
+    assert res["preference_pairs"] == 30
+
+    # Preference-pair export
+    prefs = client.get(f"/api/experiments/{exp_id}/preferences").json()
+    assert prefs["kind"] == "rollout"
+    assert len(prefs["prompts"]) == 2
+    pairs = prefs["prompts"][0]["preference_pairs"]
+    assert len(pairs) == 15
+    assert all("preferred" in p and "rejected" in p for p in pairs)
+    # rank 1 (best) is preferred over every other rank in that prompt.
+    rank_1_id = prefs["prompts"][0]["candidates"][0]["generation_id"]
+    rank_1_pairs = [p for p in pairs if p["preferred"]["generation_id"] == rank_1_id]
+    assert len(rank_1_pairs) == 5
+
+
+def test_rollout_all_candidates_from_model_a(client):
+    exp_id = _create(client, kind="rollout", model_a="elevenlabs", num_prompts=1)
+    pid = _add_prompt(client, exp_id, "x")
+    _generate(client, exp_id, pid)
+    db.session.remove()
+    comp = db.session.query(Comparison).filter_by(experiment_id=exp_id).one()
+    providers = [g.provider for g in comp.generations]
+    sides = [g.side for g in comp.generations]
+    assert providers == ["elevenlabs"] * CANDIDATES_PER_PROMPT
+    assert sides == ["a"] * CANDIDATES_PER_PROMPT
+
+
+def test_rollout_export_only_for_rollouts(client):
+    exp_id = _create(client, kind="head_to_head", num_prompts=1)
+    r = client.get(f"/api/experiments/{exp_id}/preferences")
+    assert r.status_code == 400
+
+
+# --------------------------------------------------------------------------- #
+# Generation behaviour
+# --------------------------------------------------------------------------- #
+def test_generate_is_idempotent(client):
+    exp_id = _create(client, kind="head_to_head", num_prompts=1)
+    pid = _add_prompt(client, exp_id, "x")
+    r1 = client.post(f"/api/experiments/{exp_id}/generate", json={"prompt_id": pid}).json()
+    r2 = client.post(f"/api/experiments/{exp_id}/generate", json={"prompt_id": pid}).json()
+    assert r1["candidates"] == CANDIDATES_PER_PROMPT
+    assert r2["generated"] == 0
+
+
+def test_concurrent_generate_does_not_duplicate(client, monkeypatch):
+    exp_id = _create(client, kind="head_to_head", num_prompts=1)
+    pid = _add_prompt(client, exp_id, "parallel")
 
     original_generate = service._generate_with_retry
 
@@ -195,71 +304,66 @@ def test_concurrent_generate_all_does_not_duplicate_work(client, monkeypatch):
 
     monkeypatch.setattr(service, "_generate_with_retry", slow_generate)
 
-    def generate_all(_):
-        return client.post(
-            f"/api/experiments/{exp_id}/generate_all", json={"prompt_id": pid}
-        )
+    def generate(_):
+        return client.post(f"/api/experiments/{exp_id}/generate", json={"prompt_id": pid})
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        responses = list(executor.map(generate_all, range(2)))
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        responses = list(ex.map(generate, range(2)))
 
     assert [r.status_code for r in responses] == [200, 200]
-    assert sorted(r.json()["generated"] for r in responses) == [0, 4]
-    assert db.session.query(Comparison).count() == 2
-    assert db.session.query(Generation).count() == 4
+    counts = sorted(r.json()["generated"] for r in responses)
+    assert counts == [0, CANDIDATES_PER_PROMPT]
+    assert db.session.query(Comparison).count() == 1
+    assert db.session.query(Generation).count() == CANDIDATES_PER_PROMPT
 
 
-def test_experiment_overview_lists_votes_confidence_and_winner(client):
-    prompt_text = (
-        "a very long cinematic synthwave prompt with driving drums and a bright "
-        "lead melody that should be visibly truncated in the overview table"
-    )
-    exp_id = _create(client, num_prompts=1, samples=3)
-    pid = client.post(
-        f"/api/experiments/{exp_id}/prompts", json={"text": prompt_text}
-    ).json()["prompt_id"]
-    assert client.post(
-        f"/api/experiments/{exp_id}/generate_all", json={"prompt_id": pid}
-    ).status_code == 200
+# --------------------------------------------------------------------------- #
+# Ranking validation
+# --------------------------------------------------------------------------- #
+def test_ranking_must_be_permutation(client):
+    exp_id = _create(client, kind="head_to_head", num_prompts=1)
+    pid = _add_prompt(client, exp_id, "x")
+    _generate(client, exp_id, pid)
+    comp_id = client.get(f"/api/experiments/{exp_id}/state").json()["open_comparison"]["comparison_id"]
+    # Wrong length
+    r = client.post(f"/api/comparisons/{comp_id}/rank", json={"ranked_slots": [1, 2, 3]})
+    assert r.status_code == 400
+    # Duplicate slot
+    r = client.post(f"/api/comparisons/{comp_id}/rank", json={"ranked_slots": [1, 1, 2, 3, 4, 5]})
+    assert r.status_code == 400
+    # Right shape works
+    r = client.post(f"/api/comparisons/{comp_id}/rank", json={"ranked_slots": [1, 2, 3, 4, 5, 6]})
+    assert r.status_code == 200
 
+
+def test_ranking_is_idempotent(client):
+    exp_id = _create(client, kind="head_to_head", num_prompts=1)
+    pid = _add_prompt(client, exp_id, "x")
+    _generate(client, exp_id, pid)
+    comp_id = client.get(f"/api/experiments/{exp_id}/state").json()["open_comparison"]["comparison_id"]
+    _rank(client, comp_id, [1, 2, 3, 4, 5, 6])
+    # Resubmit a different order: should be ignored.
+    r = client.post(f"/api/comparisons/{comp_id}/rank", json={"ranked_slots": [6, 5, 4, 3, 2, 1]})
+    assert r.status_code == 200
     db.session.remove()
-    comparisons = (
-        db.session.query(Comparison)
-        .filter_by(experiment_id=exp_id)
-        .order_by(Comparison.sample_index)
-        .all()
-    )
-    other_provider = next(p for p in service.PROVIDER_NAMES if p != service.PRIMARY_PROVIDER)
-    winners = [service.PRIMARY_PROVIDER, service.PRIMARY_PROVIDER, other_provider]
-    for comparison, provider in zip(comparisons, winners):
-        winner = next(g for g in comparison.generations if g.provider == provider)
-        response = client.post(
-            f"/api/comparisons/{comparison.id}/choose",
-            json={"winner_slot": winner.slot},
-        )
-        assert response.status_code == 200
+    comp = db.session.get(Comparison, comp_id)
+    # Ranks were not overwritten — still match the initial submission.
+    ranks_by_slot = {g.slot: g.rank_position for g in comp.generations}
+    assert ranks_by_slot == {1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6}
 
-    overview = client.get("/api/experiments").json()["experiments"][0]
-    assert overview["id"] == exp_id
-    assert overview["prompt"].endswith("...")
-    assert len(overview["prompt"]) <= 80
-    assert overview["prompt_full"] == prompt_text
-    assert overview["model_a_name"] == "ElevenLabs Music"
-    assert overview["model_a_votes"] == 2
-    assert overview["model_b_name"] == "Stable Audio 3.0 (fal)"
-    assert overview["model_b_votes"] == 1
-    assert overview["confidence_score"] is not None
-    assert overview["confidence_score_label"].endswith("%")
-    assert overview["winning_model_name"] == "ElevenLabs Music"
+
+# --------------------------------------------------------------------------- #
+# Overview page
+# --------------------------------------------------------------------------- #
+def test_overview_separates_h2h_and_rollout(client):
+    h2h_id = _create(client, kind="head_to_head", num_prompts=1)
+    rollout_id = _create(client, kind="rollout", model_a="elevenlabs", num_prompts=1)
+
+    rows = client.get("/api/experiments").json()
+    assert {r["id"] for r in rows["head_to_head"]} == {h2h_id}
+    assert {r["id"] for r in rows["rollout"]} == {rollout_id}
 
     page = client.get("/experiments")
     assert page.status_code == 200
-    assert "Experiment overview" in page.text
-    assert "ElevenLabs Music" in page.text
-    assert "Stable Audio 3.0 (fal)" in page.text
-
-
-def test_experiment_records_user(client):
-    exp_id = _create(client, 1, 1, user_email="jacklaurenson@gmail.com")
-    state = client.get(f"/api/experiments/{exp_id}/state").json()
-    assert state["user_email"] == "jacklaurenson@gmail.com"
+    assert "Head-to-head overview" in page.text
+    assert "Rollout overview" in page.text
