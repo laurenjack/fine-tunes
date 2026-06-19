@@ -60,6 +60,33 @@ Optional env knobs:
 | `ELEVENLABS_MAX_CONCURRENCY` | `2` (Free-tier safe) | raise to your tier cap (Starter 3, Creator 5, Pro 10, Scale/Business 15) |
 | `FAL_MAX_CONCURRENCY` | `4` | fal queue width |
 | `FINETUNES_USE_MOCK` | `false` | force mock generator |
+| `PORT` | `5001` | dev server port |
+
+## Running the dev server
+
+```bash
+./scripts/start_dev.sh         # http://127.0.0.1:5001
+PORT=8000 ./scripts/start_dev.sh   # override the port
+```
+
+What the script does:
+
+- Frees the configured port first (kills any leftover `uvicorn app:app`), so
+  re-running it after a crash or stuck process Just Works.
+- Boots `uvicorn app:app --reload` with WatchFiles. Editing a Python file,
+  template, or static file is picked up automatically — usually a browser
+  refresh is enough.
+- Static URLs (`experiment.js`, `style.css`) are cache-busted by file mtime,
+  so a JS or CSS edit invalidates the browser cache without a hard reload.
+
+To stop it:
+
+- Foreground: `Ctrl+C`.
+- Backgrounded or stuck: `pkill -f uvicorn` (and `pkill -f multiprocessing.spawn`
+  if a worker leaks — uvicorn's reloader spawns one).
+
+From inside Claude Code, the `/start_dev` skill wraps the same script and
+reports the URL when ready.
 
 ## How it flows
 
