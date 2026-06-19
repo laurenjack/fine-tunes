@@ -98,51 +98,54 @@ textarea { width: 100%; resize: vertical; font-family: inherit; }
 .choices .btn { flex: 1; }
 .hint { font-size: .85rem; margin-top: .5rem; }
 
-/* Ranking grid: 6 candidate cards, clickable to assign rank 1..6. */
-.cards {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: .85rem;
+/* Ranking stack: one vertical column of draggable bars. */
+.rank-list {
+  display: flex;
+  flex-direction: column;
+  gap: .6rem;
   margin: 1rem 0;
 }
-.card-clip {
+.rank-row {
+  display: flex;
+  align-items: center;
+  gap: .85rem;
   background: #0c0e12;
   border: 1px solid var(--line);
   border-radius: 10px;
-  padding: .85rem;
-  cursor: pointer;
-  transition: border-color .15s ease, background .15s ease;
-  user-select: none;
+  padding: .6rem .85rem;
+  transition: border-color .15s ease, background .15s ease, opacity .15s ease;
 }
-.card-clip:hover { border-color: var(--accent); }
-.card-clip.ranked {
-  border-color: var(--accent-2);
-  background: rgba(37, 194, 160, .07);
-}
-.card-clip-head {
-  display: flex;
-  justify-content: space-between;
+.rank-row.dragging { opacity: .35; }
+.rank-row.drop-above { border-top: 2px solid var(--accent-2); }
+.rank-row.drop-below { border-bottom: 2px solid var(--accent-2); }
+.drag-handle {
+  display: inline-flex;
   align-items: center;
-  margin-bottom: .5rem;
-  font-size: .9rem;
+  justify-content: center;
+  width: 28px;
+  height: 32px;
+  border-radius: 6px;
+  cursor: grab;
   color: var(--muted);
+  font-size: 1.3rem;
+  user-select: none;
+  background: rgba(255, 255, 255, .03);
 }
-.card-clip-rank {
+.drag-handle:hover { color: var(--ink); background: rgba(255, 255, 255, .07); }
+.drag-handle:active { cursor: grabbing; }
+.row-rank {
   font-weight: 700;
   font-size: 1.05rem;
   color: var(--accent-2);
-  min-width: 1.6rem;
+  min-width: 2rem;
   text-align: right;
 }
-.card-clip audio { width: 100%; }
+.rank-row audio { flex: 1; min-width: 0; }
 .rank-actions {
   display: flex;
   gap: 1rem;
   margin-top: 1rem;
   justify-content: flex-end;
-}
-@media (max-width: 600px) {
-  .cards { grid-template-columns: 1fr 1fr; }
 }
 
 .generating { display: flex; align-items: center; gap: .75rem; font-size: 1.15rem; font-weight: 600; margin-top: 1rem; }

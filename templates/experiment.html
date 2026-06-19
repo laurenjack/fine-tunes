@@ -29,12 +29,11 @@
   <!-- Ranking 6 candidates -->
   <div id="rank-phase" class="phase" hidden>
     <p class="current-prompt">Prompt: &ldquo;<span id="current-prompt-text"></span>&rdquo;</p>
-    <p class="muted">Listen to each clip, then <strong>click them in order from best to worst</strong>.
-      Click a ranked card to clear it.</p>
-    <div id="cards" class="cards"></div>
+    <p class="muted">Listen to each clip, then <strong>drag the bars to reorder them</strong>:
+      top is best (rank&nbsp;1), bottom is worst.</p>
+    <div id="rank-list" class="rank-list"></div>
     <div class="rank-actions">
-      <button id="reset-ranking" class="btn">Clear ranking</button>
-      <button id="submit-ranking" class="btn primary" disabled>Submit ranking</button>
+      <button id="submit-ranking" class="btn primary">Submit ranking</button>
     </div>
   </div>
 

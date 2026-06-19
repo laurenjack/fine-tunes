@@ -1,5 +1,5 @@
 // Drives the experiment flow:
-//   prompt entry -> generate 6 candidates -> click-to-rank -> submit -> next prompt
+//   prompt entry -> generate 6 candidates -> drag-to-rank -> submit -> next prompt
 (function () {
   const app = document.getElementById("app");
   const expId = app.dataset.expId;
@@ -12,20 +12,17 @@
     generatingPhase: document.getElementById("generating-phase"),
     rankPhase: document.getElementById("rank-phase"),
     currentPromptText: document.getElementById("current-prompt-text"),
-    cards: document.getElementById("cards"),
+    rankList: document.getElementById("rank-list"),
     submitBtn: document.getElementById("submit-ranking"),
-    resetBtn: document.getElementById("reset-ranking"),
     donePhase: document.getElementById("done-phase"),
     resultsLink: document.getElementById("results-link"),
     error: document.getElementById("error"),
   };
 
-  // Per-prompt session state.
   let currentPromptId = null;
   let currentComparisonId = null;
   let generatingInFlight = false;
-  let ranking = []; // slot numbers in user-preferred order (slot at index 0 = rank 1)
-  let songs = [];   // [{slot, url, format}]
+  let dragSrc = null;
 
   // --- helpers ---
   function showError(msg) { el.error.textContent = msg; el.error.hidden = false; }
@@ -47,15 +44,13 @@
   async function loadState() {
     clearError();
     let state;
-    try {
-      state = await api(`/api/experiments/${expId}/state`);
-    } catch (e) { showError(e.message); return; }
+    try { state = await api(`/api/experiments/${expId}/state`); }
+    catch (e) { showError(e.message); return; }
     render(state);
   }
 
   function render(state) {
     hidePhases();
-    resetRanking();
 
     const kindLabel = state.kind === "rollout" ? "Rollout" : "Head-to-head";
     if (state.complete) {
@@ -85,11 +80,10 @@
       return;
     }
 
-    // Candidates ready: show ranking grid.
-    songs = (state.open_comparison && state.open_comparison.songs) || [];
-    currentComparisonId = state.open_comparison ? state.open_comparison.comparison_id : null;
+    const open = state.open_comparison;
+    currentComparisonId = open ? open.comparison_id : null;
     el.rankPhase.hidden = false;
-    renderCards();
+    renderRows((open && open.songs) || []);
   }
 
   async function kickGenerate(promptId) {
@@ -109,59 +103,80 @@
     }
   }
 
-  // --- ranking UI ---
-  function resetRanking() {
-    ranking = [];
-    el.submitBtn.disabled = true;
-  }
-
-  function renderCards() {
-    el.cards.innerHTML = "";
+  // --- drag-to-rank ---
+  function renderRows(songs) {
+    el.rankList.innerHTML = "";
     for (const song of songs) {
-      const card = document.createElement("div");
-      card.className = "card-clip";
-      card.dataset.slot = String(song.slot);
-      card.innerHTML = `
-        <div class="card-clip-head">
-          <span class="card-clip-slot">Slot ${song.slot}</span>
-          <span class="card-clip-rank" data-rank></span>
-        </div>
+      const row = document.createElement("div");
+      row.className = "rank-row";
+      row.dataset.slot = String(song.slot);
+      row.innerHTML = `
+        <span class="drag-handle" draggable="true" title="Drag to reorder" aria-label="Drag to reorder">≡</span>
+        <span class="row-rank" data-rank></span>
         <audio controls preload="auto" src="${song.url}"></audio>
       `;
-      card.addEventListener("click", (e) => {
-        // Don't trigger ranking when interacting with the audio player.
-        if (e.target.closest("audio")) return;
-        toggleRank(song.slot);
-      });
-      el.cards.appendChild(card);
+      attachDragHandlers(row);
+      el.rankList.appendChild(row);
     }
     paintRanks();
+    el.submitBtn.disabled = false;
   }
 
-  function toggleRank(slot) {
-    const idx = ranking.indexOf(slot);
-    if (idx >= 0) {
-      ranking.splice(idx, 1); // un-rank: remove this slot; subsequent ranks shift down
-    } else if (ranking.length < songs.length) {
-      ranking.push(slot);
-    }
-    paintRanks();
+  function attachDragHandlers(row) {
+    const handle = row.querySelector(".drag-handle");
+    handle.addEventListener("dragstart", (e) => {
+      dragSrc = row;
+      row.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      // Use the whole row as the drag image, not just the tiny handle.
+      try { e.dataTransfer.setDragImage(row, 20, 20); } catch (_) {}
+      // Required for Firefox to actually start the drag.
+      e.dataTransfer.setData("text/plain", row.dataset.slot);
+    });
+    handle.addEventListener("dragend", () => {
+      row.classList.remove("dragging");
+      clearDropHints();
+      dragSrc = null;
+      paintRanks();
+    });
+    row.addEventListener("dragover", (e) => {
+      if (!dragSrc || dragSrc === row) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      const rect = row.getBoundingClientRect();
+      const above = (e.clientY - rect.top) < rect.height / 2;
+      clearDropHints();
+      row.classList.add(above ? "drop-above" : "drop-below");
+    });
+    row.addEventListener("dragleave", () => {
+      row.classList.remove("drop-above", "drop-below");
+    });
+    row.addEventListener("drop", (e) => {
+      if (!dragSrc || dragSrc === row) return;
+      e.preventDefault();
+      const rect = row.getBoundingClientRect();
+      const above = (e.clientY - rect.top) < rect.height / 2;
+      el.rankList.insertBefore(dragSrc, above ? row : row.nextSibling);
+      clearDropHints();
+      paintRanks();
+    });
+  }
+
+  function clearDropHints() {
+    el.rankList.querySelectorAll(".drop-above, .drop-below").forEach((r) => {
+      r.classList.remove("drop-above", "drop-below");
+    });
   }
 
   function paintRanks() {
-    for (const card of el.cards.querySelectorAll(".card-clip")) {
-      const slot = Number(card.dataset.slot);
-      const rank = ranking.indexOf(slot);
-      const badge = card.querySelector("[data-rank]");
-      if (rank >= 0) {
-        card.classList.add("ranked");
-        badge.textContent = `#${rank + 1}`;
-      } else {
-        card.classList.remove("ranked");
-        badge.textContent = "";
-      }
-    }
-    el.submitBtn.disabled = ranking.length !== songs.length;
+    el.rankList.querySelectorAll(".rank-row").forEach((row, i) => {
+      row.querySelector("[data-rank]").textContent = `#${i + 1}`;
+    });
+  }
+
+  function currentRanking() {
+    return Array.from(el.rankList.querySelectorAll(".rank-row"))
+      .map((row) => Number(row.dataset.slot));
   }
 
   // --- events ---
@@ -181,10 +196,10 @@
     finally { el.promptSubmit.disabled = false; }
   });
 
-  el.resetBtn.addEventListener("click", () => { ranking = []; paintRanks(); });
-
   el.submitBtn.addEventListener("click", async () => {
-    if (!currentComparisonId || ranking.length !== songs.length) return;
+    if (!currentComparisonId) return;
+    const ranking = currentRanking();
+    if (ranking.length === 0) return;
     clearError();
     el.submitBtn.disabled = true;
     try {
