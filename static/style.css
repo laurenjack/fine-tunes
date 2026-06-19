@@ -98,12 +98,13 @@ textarea { width: 100%; resize: vertical; font-family: inherit; }
 .choices .btn { flex: 1; }
 .hint { font-size: .85rem; margin-top: .5rem; }
 
-/* Ranking stack: one vertical column of draggable bars. */
+/* Ranking stack: one narrow vertical column of draggable bars. */
 .rank-list {
   display: flex;
   flex-direction: column;
   gap: .6rem;
-  margin: 1rem 0;
+  margin: 1rem auto;
+  max-width: 50%;
 }
 .rank-row {
   display: flex;
@@ -133,19 +134,24 @@ textarea { width: 100%; resize: vertical; font-family: inherit; }
 }
 .drag-handle:hover { color: var(--ink); background: rgba(255, 255, 255, .07); }
 .drag-handle:active { cursor: grabbing; }
-.row-rank {
+/* Stable A..F identifier — does not change when the row is dragged. */
+.row-letter {
   font-weight: 700;
   font-size: 1.05rem;
   color: var(--accent-2);
-  min-width: 2rem;
-  text-align: right;
+  min-width: 1.4rem;
+  text-align: center;
 }
 .rank-row audio { flex: 1; min-width: 0; }
 .rank-actions {
   display: flex;
   gap: 1rem;
-  margin-top: 1rem;
+  margin: 1rem auto 0;
+  max-width: 50%;
   justify-content: flex-end;
+}
+@media (max-width: 800px) {
+  .rank-list, .rank-actions { max-width: 100%; }
 }
 
 .generating { display: flex; align-items: center; gap: .75rem; font-size: 1.15rem; font-weight: 600; margin-top: 1rem; }

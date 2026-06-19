@@ -104,21 +104,25 @@
   }
 
   // --- drag-to-rank ---
+  const LETTERS = ["A", "B", "C", "D", "E", "F"];
+
   function renderRows(songs) {
     el.rankList.innerHTML = "";
-    for (const song of songs) {
+    songs.forEach((song, i) => {
       const row = document.createElement("div");
       row.className = "rank-row";
       row.dataset.slot = String(song.slot);
+      // Stable letter label so the listener can refer to a specific clip even
+      // after dragging - it does NOT change when the row moves.
+      const letter = LETTERS[i] || "?";
       row.innerHTML = `
         <span class="drag-handle" draggable="true" title="Drag to reorder" aria-label="Drag to reorder">≡</span>
-        <span class="row-rank" data-rank></span>
+        <span class="row-letter">${letter}</span>
         <audio controls preload="auto" src="${song.url}"></audio>
       `;
       attachDragHandlers(row);
       el.rankList.appendChild(row);
-    }
-    paintRanks();
+    });
     el.submitBtn.disabled = false;
   }
 
@@ -137,7 +141,6 @@
       row.classList.remove("dragging");
       clearDropHints();
       dragSrc = null;
-      paintRanks();
     });
     row.addEventListener("dragover", (e) => {
       if (!dragSrc || dragSrc === row) return;
@@ -158,19 +161,12 @@
       const above = (e.clientY - rect.top) < rect.height / 2;
       el.rankList.insertBefore(dragSrc, above ? row : row.nextSibling);
       clearDropHints();
-      paintRanks();
     });
   }
 
   function clearDropHints() {
     el.rankList.querySelectorAll(".drop-above, .drop-below").forEach((r) => {
       r.classList.remove("drop-above", "drop-below");
-    });
-  }
-
-  function paintRanks() {
-    el.rankList.querySelectorAll(".rank-row").forEach((row, i) => {
-      row.querySelector("[data-rank]").textContent = `#${i + 1}`;
     });
   }
 
