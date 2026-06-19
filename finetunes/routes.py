@@ -23,6 +23,21 @@ from .providers import PROVIDER_NAMES, display_name, is_mock
 router = APIRouter()
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
+_STATIC_DIR = os.path.join(BASE_DIR, "static")
+
+
+def _static_v(path: str) -> str:
+    """Return /static/<path>?v=<mtime> so JS/CSS edits bust the browser cache."""
+    clean = path.lstrip("/")
+    try:
+        mtime = int(os.path.getmtime(os.path.join(_STATIC_DIR, clean)))
+    except OSError:
+        mtime = 0
+    return f"/static/{clean}?v={mtime}"
+
+
+templates.env.globals["static_v"] = _static_v
+
 _MIME = {"mp3": "audio/mpeg", "wav": "audio/wav"}
 
 
